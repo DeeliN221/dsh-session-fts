@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-session-fts',
+  id: 'dsh-session-fts',
   factory(require) {
     const React = require('react')
     const h = React.createElement

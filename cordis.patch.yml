@@ -3,7 +3,7 @@
 # whole config, so restate every field you keep.
 - insert:
     - id: session-fts
-      name: '@local/dsh-session-fts'
+      name: 'dsh-session-fts'
       config:
         # Absolute path of the derived index; omit for ~/.dsh/session-fts.sqlite.
         # path: /Users/me/.dsh/session-fts.sqlite

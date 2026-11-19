@@ -1,9 +1,17 @@
 {
-  "name": "@local/dsh-session-fts",
+  "name": "dsh-session-fts",
   "version": "0.1.0",
-  "private": true,
   "description": "Local full-text session search with CJK-aware matching and time-range filters",
   "license": "MIT",
+  "author": "xuhuaiqu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xuhuaiqu/dsh-session-fts.git"
+  },
+  "homepage": "https://github.com/xuhuaiqu/dsh-session-fts#readme",
+  "bugs": {
+    "url": "https://github.com/xuhuaiqu/dsh-session-fts/issues"
+  },
   "keywords": [
     "deepseek-harness",
     "dsh-plugin",
@@ -32,7 +40,9 @@
     "LICENSE"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
@@ -42,6 +52,11 @@
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-workspace"
       ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.5": "compatible"
+      }
     }
   }
 }
