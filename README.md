@@ -4,15 +4,19 @@ DeepSeek Harness（DSH）的本地会话全文搜索插件：中文按字面子�
 
 Local full-text search over earlier DeepSeek Harness sessions, with reliable Chinese matching, time-range filters, a sidebar search page, and an agent tool. [English summary](#english).
 
+![dsh-session-fts 使用效果](docs/screenshot.png)
+
 ## 为什么需要它
 
-DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器，它把一段不带空格的中文当成一个词，所以句子中间的中文词基本搜不到。在一份真实数据上的对比：
+DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器，它把一段不带空格的中文当成一个词，所以句子中间的中文词基本搜不到。在同一批文档上对比内置索引和本插件的逐字分词方案：
 
-| 关键词 | 子串实际出现 | 内置索引命中 | 本插件命中 |
+| 关键词 | 子串实际出现 | 内置索引命中 | 逐字分词命中 |
 |---|---|---|---|
 | 全文搜索 | 11 | 0 | 11 |
 | 搜索 | 147 | 40 | 147 |
 | 插件 | 161 | 62 | 161 |
+
+这批文档包含工具输出。本插件默认不索引工具输出，所以默认配置下实际命中数会更少，但仍然与子串扫描一致。设计细节和更多实测见 [技术方案](docs/DESIGN.md)。
 
 内置搜索默认关闭，侧栏界面上也没有时间范围选项。
 
@@ -40,7 +44,15 @@ DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器�
 
 需要 DeepSeek Harness 0.2.2 或更新版本（运行时自带 `node:sqlite`，不需要安装任何依赖）。
 
-从 GitHub 源码安装（Desktop 用户把 `web` 换成 `desktop`）：
+从 npm 安装（Desktop 用户把 `web` 换成 `desktop`）：
+
+```bash
+dsh plugin --profile web add dsh-session-fts
+```
+
+也可以在 DSH 的 **插件 → 添加插件** 中输入 `dsh-session-fts`。
+
+从 GitHub 源码安装：
 
 ```bash
 dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
@@ -117,6 +129,8 @@ dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
 | `GET` | `/session-fts/api/status` | 索引统计、建索引进度、工作区列表 |
 | `POST` | `/session-fts/api/reindex` | 重新扫描；`{"full": true}` 为清空后重建 |
 
+`/session-fts/api/` 是相对页面地址解析的，所以 Desktop 和反向代理子路径下都能访问。
+
 ## 实现
 
 | 文件 | 职责 |
@@ -129,6 +143,8 @@ dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
 
 数据表：`sessions`（每个会话一行，含索引标记）、`events`（每条可搜索消息一行）、`fts`（contentless FTS5 表，rowid 对应 `events.id`）。用户输入的查询词会被包成带引号的 FTS5 短语，`OR`、`NEAR`、`*` 等语法都按普通文字处理。
 
+完整设计（分词方案对比、存储结构、增量对账、查询、接口、性能、安全）见 [docs/DESIGN.md](docs/DESIGN.md)。
+
 ## 限制
 
 - 点击结果只打开会话，不定位到命中的那条消息。
@@ -138,7 +154,7 @@ dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
 <a id="english"></a>
 ## English
 
-A DeepSeek Harness plugin that keeps a local SQLite FTS5 index of earlier sessions. Every CJK character is indexed as its own token and queries compile to consecutive-character phrases, so Chinese text matches exactly where the literal substring occurs, which the built-in `unicode61` index cannot do. It adds a **Session search** page to the left sidebar (time range presets with a 30-day default, custom dates, workspace, author, and subagent filters, relevance or recency order) and a `session_fts_search` agent tool scoped to the current workspace by default. Only text the person typed and assistant replies are indexed; injected context and reasoning are skipped, and tool output is opt-in through `indexToolOutput`. Install it in DSH 0.2.2 or later with `dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts`, or add a cloned directory under **Plugins → Add plugin**. No dependencies, no network access.
+A DeepSeek Harness plugin that keeps a local SQLite FTS5 index of earlier sessions. Every CJK character is indexed as its own token and queries compile to consecutive-character phrases, so Chinese text matches exactly where the literal substring occurs, which the built-in `unicode61` index cannot do. It adds a **Session search** page to the left sidebar (time range presets with a 30-day default, custom dates, workspace, author, and subagent filters, relevance or recency order) and a `session_fts_search` agent tool scoped to the current workspace by default. Only text the person typed and assistant replies are indexed; injected context and reasoning are skipped, and tool output is opt-in through `indexToolOutput`. Install it in DSH 0.2.2 or later with `dsh plugin --profile web add dsh-session-fts` (npm), `dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts` (source), or add a cloned directory under **Plugins → Add plugin**. No dependencies, no network access. Design notes (in Chinese): [docs/DESIGN.md](docs/DESIGN.md).
 
 ## License
 
