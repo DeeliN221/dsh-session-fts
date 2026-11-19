@@ -1,0 +1,14 @@
+# Local session full-text search. Override any field from the profile
+# cordis.patch.yml with an entry of the same id; an override replaces the
+# whole config, so restate every field you keep.
+- insert:
+    - id: session-fts
+      name: '@local/dsh-session-fts'
+      config:
+        # Absolute path of the derived index; omit for ~/.dsh/session-fts.sqlite.
+        # path: /Users/me/.dsh/session-fts.sqlite
+        indexToolOutput: false
+        defaultDays: 30
+        maxResults: 20
+        maxDocChars: 20000
+        includeSubagents: false

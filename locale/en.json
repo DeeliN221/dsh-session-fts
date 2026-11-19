@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Session full-text search",
+    "description": "Searches earlier sessions with a local SQLite index: Chinese text matches as a literal substring, results filter by time range (last 30 days by default), workspace, and author. Adds a Session search page to the sidebar and a session_fts_search agent tool scoped to the current workspace. Tool output is not indexed unless indexToolOutput is enabled.",
+    "detail": "docs/DETAIL.md"
+  }
+}

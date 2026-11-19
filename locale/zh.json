@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "会话全文搜索",
+    "description": "用本机 SQLite 索引搜索历史会话：中文按字面子串匹配，结果可按时间范围（默认近 30 天）、工作区和发言方筛选。在侧栏增加“会话搜索”页面，并提供默认只搜当前工作区的 session_fts_search 智能体工具。工具输出默认不索引，可通过 indexToolOutput 开启。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}
