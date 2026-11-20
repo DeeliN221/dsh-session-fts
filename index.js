@@ -9,9 +9,8 @@
 
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { FtsStore } from './host/store.js'
+import { AsyncFtsStore } from './host/lexical.js'
 import { Indexer } from './host/indexer.js'
-import { ResultCache } from './host/cache.js'
 import { SemanticSearch } from './host/semantic.js'
 import { compileQuery } from './host/text.js'
 
@@ -37,6 +36,10 @@ function resolveConfig(config = {}) {
   if (!Number.isFinite(minScore) || minScore < -1 || minScore > 1) throw new TypeError('session-fts: invalid minScore')
   return {
     path,
+    sourceId: config.sourceId ?? home,
+    busyTimeoutMs: int(config.busyTimeoutMs, 5000, 1, 60000),
+    maxPending: int(config.maxPending, 64, 1, 1000),
+    queryTimeoutMs: int(config.queryTimeoutMs, 10000, 1, 60000),
     resultCacheSize: int(config.resultCacheSize, 64, 0, 1000),
     resultCacheBytes: int(config.resultCacheBytes, 4 * 1024 * 1024, 1024, 64 * 1024 * 1024),
     refreshIntervalMs: int(config.refreshIntervalMs, 60000, 5000, 3600000),
@@ -219,12 +222,17 @@ function validateToolArgs(args) {
   }
 }
 
-export function apply(ctx, rawConfig) {
+export async function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig)
   const optionsKey = JSON.stringify({ tools: config.tools, maxDocChars: config.maxDocChars, v: 1 })
-  const store = new FtsStore(config.path, optionsKey)
+  const store = new AsyncFtsStore(config.path, optionsKey, {
+    sourceId: config.sourceId,
+    busyTimeoutMs: config.busyTimeoutMs,
+    maxPending: config.maxPending,
+    cacheSize: config.resultCacheSize,
+    cacheBytes: config.resultCacheBytes,
+  })
   const indexer = new Indexer(ctx, store, config)
-  const cache = new ResultCache(config.resultCacheSize, config.resultCacheBytes)
   const semantic = new SemanticSearch(config)
   let semanticTimer
   let closed = false
@@ -241,9 +249,9 @@ export function apply(ctx, rawConfig) {
     clearTimeout(semanticTimer)
     await indexer.dispose()
     await semantic.close()
-    cache.clear()
-    store.close()
+    await store.close()
   }, 'session-fts: store')
+  await store.ready
 
   ctx.on('session/event', (session) => {
     if (session?.id !== undefined) indexer.touch(session.id)
@@ -263,12 +271,10 @@ export function apply(ctx, rawConfig) {
   async function search(input) {
     const request = normalizeRequest(input, config)
     if (request.mode === 'semantic') return { request, result: await semantic.search(request) }
-    const key = JSON.stringify(request)
-    let result = cache.get(key, store.revision)
-    if (result === undefined) {
-      result = request.mode === 'title' ? store.searchTitles(request) : store.search(request)
-      cache.set(key, store.revision, result)
-    }
+    const exec = { timeoutMs: config.queryTimeoutMs }
+    const result = request.mode === 'title'
+      ? await store.searchTitles(request, exec)
+      : await store.search(request, exec)
     return { request, result }
   }
 
@@ -323,13 +329,13 @@ export function apply(ctx, rawConfig) {
             writeJson(res, 200, {
               ok: true,
               value: {
-                ...store.stats(),
+                ...await store.stats(),
                 indexing: indexer.state,
                 semantic: semantic.status,
                 path: config.path,
                 indexToolOutput: config.tools,
                 defaultDays: config.defaultDays,
-                workspaces: store.workspaces(),
+                workspaces: await store.workspaces(),
               },
             })
           } else if (action === 'reindex' && req.method === 'POST') {
