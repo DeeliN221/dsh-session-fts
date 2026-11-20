@@ -14,12 +14,14 @@ Memory options example (plugin configuration object):
 { memory: {
   retrievalMode: 'shared', userId: 'my-user', deviceId: 'mac', profile: 'integration',
   stateDir: '/isolated/state/memory',
-  centralUrl: 'http://existing-central:8787', tokenFile: '/private/device-tokens.json',
+  centralUrl: 'http://existing-central:8787',
   workspaceMappings: {
     '/local/repo': [{ deviceId: 'work', cwd: '/remote/repo' }]
   }
 } }
 ```
+Set `DSH_MEMORY_CENTRAL_TOKEN_FILE=/private/device-tokens.json` in the isolated Host environment (or pass the existing `token` option through a private secret source). Token selection must resolve to the same configured user/device identity.
+
 `stateDir` gets a deterministic `shared-<identity hash>` subdirectory. One active producer must own each shared-state directory; give independently running profiles separate directories. The legacy outbox is neither consumed nor deleted. Do not put bearer tokens in version control.
 
 ## Contract and authorization
