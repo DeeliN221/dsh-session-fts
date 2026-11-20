@@ -120,8 +120,8 @@ export class Indexer {
         if (row?.stamp?.startsWith('live:')) continue
         if (await persistence.stat(id) !== undefined) continue
         await this.store.deleteSession(id)
+        this.onCommit()
       }
-      this.onCommit()
       if (failures.length) throw new AggregateError(failures, `${failures.length} sessions failed to index; retry scan`)
       this.state = { ...this.state, phase: 'idle', lastRun: { at: started, ms: Date.now() - started } }
     } catch (error) {
@@ -196,6 +196,6 @@ export class Indexer {
       stamp,
       indexed_seq: lastSeq,
     }, docs)
-    this.onCommit()
+    this.onCommit(docs)
   }
 }

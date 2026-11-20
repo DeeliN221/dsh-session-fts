@@ -11,6 +11,7 @@ export class SemanticSearch {
     this.nextId = 0
     this.closed = false
     this.refreshing = null
+    this.requested = false
   }
 
   _start() {
@@ -51,10 +52,15 @@ export class SemanticSearch {
     })
   }
 
+  dirty(docs) {
+    if (docs === undefined || docs.length) this.dirtySinceRefresh = true
+  }
+
   /** Warm the model lazily and reconcile derived chunks after lexical indexing. */
   refresh() {
     if (!this.config.semantic.enabled || this.closed) return Promise.resolve()
     if (this.refreshing) { this.refreshAgain = true; return this.refreshing }
+    this.dirtySinceRefresh = false
     this.refreshing = (async () => {
       do {
         this.refreshAgain = false
@@ -65,6 +71,10 @@ export class SemanticSearch {
   }
 
   search(normalizedRequest) {
+    this.requested = true
+    if (this.config.semantic.enabled && !this.status.ready) {
+      void this.refresh().catch(() => {})
+    }
     if (this.closed) return Promise.reject(new Error('Semantic search is closed'))
     if (!this.status.ready) return Promise.reject(new Error(`Semantic search is not ready (${this.status.phase}); allow background model warmup and indexing to finish`))
     return this._request('search', normalizedRequest)

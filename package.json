@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-fts",
-  "version": "0.3.2-zzl.1",
+  "version": "0.3.3-zzl.1",
   "description": "Local layered title, CJK full-text and multilingual semantic session search",
   "license": "MIT",
   "author": "xuhuaiqu",

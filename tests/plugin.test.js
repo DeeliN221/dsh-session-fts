@@ -63,3 +63,18 @@ test('async indexer consults persistence again before pruning a missing list ite
   assert.deepEqual(await store.sessionIds(), ['foreign-live'])
   await indexer.dispose()
 })
+
+test('ordinary startup and lexical events never warm semantic; failure preserves lexical evidence',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'fts-lazy-')),disposers=[];let listener;
+ const events=[{seq:0,time:10,type:'user/message',data:{role:'user',source:{kind:'user'},content:[{type:'text',text:'Nebula 星云'}]}}];
+ const session={id:'s',header:{id:'s',cwd:'/repo',createdAt:1},seq:1,inheritedEventCount:0,snapshotEvents:from=>events.filter(e=>e.seq>=from)};
+ const ctx={sessions:{get:()=>session},sessionQuery:{listSessions:async()=>[{header:session.header}]},get:()=>undefined,
+ tools:{register(){return ()=>{}}},effect(fn){const d=fn();if(typeof d==='function')disposers.push(d)},on(n,h){listener=h},inject(){}};
+ const runtime=await apply(ctx,{path:join(root,'fts.sqlite'),sourceId:'lazy',startupDelayMs:600000,refreshIntervalMs:0,semantic:{enabled:true}});
+ t.after(async()=>{for(const d of disposers.reverse())await d();rmSync(root,{recursive:true,force:true})});
+ await runtime.indexer.reconcileAll();listener(session);await runtime.indexer.settle();
+ assert.equal(runtime.semantic.worker,null);
+ runtime.semantic.refresh=()=>Promise.reject(new Error('model unavailable'));
+ await assert.rejects(runtime.retrieval.search({query:'Nebula',mode:'semantic',cwd:'/repo'},runtime.retrieval.identity),/not ready/);
+ assert.equal((await runtime.retrieval.search({query:'星云',cwd:'/repo'},runtime.retrieval.identity)).hits.length,1);
+});
