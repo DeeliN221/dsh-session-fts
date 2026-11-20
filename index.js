@@ -268,10 +268,10 @@ export async function apply(ctx, rawConfig) {
     return () => { clearTimeout(timer); clearInterval(interval) }
   }, 'session-fts: initial index')
 
-  async function search(input) {
+  async function search(input, signal) {
     const request = normalizeRequest(input, config)
     if (request.mode === 'semantic') return { request, result: await semantic.search(request) }
-    const exec = { timeoutMs: config.queryTimeoutMs }
+    const exec = { signal, timeoutMs: config.queryTimeoutMs }
     const result = request.mode === 'title'
       ? await store.searchTitles(request, exec)
       : await store.search(request, exec)
@@ -323,8 +323,13 @@ export async function apply(ctx, rawConfig) {
         const action = url.pathname.slice(url.pathname.indexOf(ROUTE) + ROUTE.length).replace(/^\/+/, '')
         try {
           if (action === 'search' && req.method === 'POST') {
-            const { result } = await search(await readJson(req))
-            writeJson(res, 200, { ok: true, value: result })
+            const controller = new AbortController()
+            const disconnected = () => { if (!res.writableEnded) controller.abort() }
+            res.once('close', disconnected)
+            try {
+              const { result } = await search(await readJson(req), controller.signal)
+              if (!controller.signal.aborted) writeJson(res, 200, { ok: true, value: result })
+            } finally { res.removeListener('close', disconnected) }
           } else if (action === 'status' && req.method === 'GET') {
             writeJson(res, 200, {
               ok: true,
