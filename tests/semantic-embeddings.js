@@ -6,7 +6,7 @@ export async function pipeline(task, model, options) {
   if (model === 'hang') await new Promise(() => {})
   return async texts => {
     if (process.env.SEMANTIC_EMBED_LOG) appendFileSync(process.env.SEMANTIC_EMBED_LOG, `${JSON.stringify(texts)}\n`)
-    await new Promise(resolve => setTimeout(resolve, 5))
+    await new Promise(resolve => setTimeout(resolve, Number(process.env.SEMANTIC_EMBED_DELAY ?? 5)))
     return { tolist: () => texts.map(text => {
       const vector = /apple|苹果/.test(text) ? [1,0,0] : /banana|香蕉/.test(text) ? [0,1,0] : [0,0,1]
       return vector

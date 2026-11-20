@@ -1,15 +1,59 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { DatabaseSync } from 'node:sqlite'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, openSync, closeSync, chmodSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as sqliteVec from 'sqlite-vec'
+import lockfile from 'proper-lockfile'
 import { makeSnippet } from './text.js'
 
 const config = workerData
 const options = config.semantic
-let db, extractor, dimension
+let db, extractor, dimension, cacheReadOnly = false
+let releaseLease, leaseError, leaseToken, stopping = false, retryTimer
+const vectorPath = `${config.path}.semantic.sqlite`
+const identity = JSON.stringify({ version: 1, model: options.model, dtype: 'q8', pooling: 'mean',
+  normalize: true, chunkChars: options.chunkChars, prefix: 'e5' })
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+function assertLease() {
+  if (stopping) throw new Error('Semantic search is closing')
+  if (leaseError) throw leaseError
+  if (!releaseLease) throw new Error('Semantic refresh requires an exclusive cache lease')
+}
+async function unlock() {
+  const release = releaseLease
+  releaseLease = null
+  if (release) await release().catch(() => {})
+}
+async function acquireLease() {
+  mkdirSync(dirname(config.path), { recursive: true, mode: 0o700 })
+  const deadline = Date.now() + 30_000
+  while (!stopping) {
+    try {
+      const release = await lockfile.lock(vectorPath, { realpath: false, stale: 10_000, update: 2_000,
+        retries: 0, onCompromised: error => { leaseError = error } })
+      if (stopping) { await release(); return false }
+      releaseLease = release
+      leaseError = null
+      leaseToken = null
+      return true
+    } catch (error) {
+      if (error.code !== 'ELOCKED') throw error
+      if (!db) openReader()
+      status({ phase: 'waiting', ready: Boolean(db), error: null, lastError: null })
+      await serveQueries()
+      if (Date.now() >= deadline) return false
+      await delay(200)
+    }
+  }
+  return false
+}
+function assertIdentity() {
+  const stored = db.prepare("SELECT value FROM semantic_meta WHERE key='identity'").get()?.value
+  if (stored !== identity) throw new Error('Semantic cache model or chunk settings differ; use a separate index path')
+  dimension = Number(db.prepare("SELECT value FROM semantic_meta WHERE key='dimension'").get()?.value) || null
+}
 let state = { phase: 'loading', ready: false, done: 0, indexed: 0, total: 0,
   error: null, lastError: null, model: options.model }
 const queries = []
@@ -23,21 +67,50 @@ function errorMessage(error) {
   const detail = cause?.code ?? cause?.message
   return `${String(error?.message ?? error)}${detail ? ` (${detail})` : ''}`
 }
-function reply(id, result, error) { parentPort.postMessage({ id, result, error: error ? errorMessage(error) : undefined }) }
+function reply(id, result, error) { if (id !== undefined) parentPort.postMessage({ id, result, error: error ? errorMessage(error) : undefined }) }
 
 async function initialize() {
-  if (extractor) { status({ ready: true }); return }
+  if (extractor) return
   status({ phase: 'loading', ready: false, error: null, lastError: null })
   // Transformers only receives model identifiers and locally computed inputs. Its
   // network access downloads model assets; inference uses the CPU in this worker.
   const { pipeline, env } = await import('@huggingface/transformers')
   env.backends.onnx.numThreads = 1
-  const model = await pipeline('feature-extraction', options.model, {
+  extractor = await pipeline('feature-extraction', options.model, {
     dtype: 'q8', device: 'cpu', cache_dir: options.cacheDir,
     session_options: { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' },
   })
-  mkdirSync(dirname(config.path), { recursive: true, mode: 0o700 })
-  const vectorPath = `${config.path}.semantic.sqlite`
+}
+
+function openReader() {
+  let reader
+  try {
+    reader = new DatabaseSync(vectorPath, { readOnly: true, allowExtension: true })
+    if (reader.prepare('PRAGMA application_id').get().application_id !== 0x44535356) { reader.close(); return }
+    const stored = reader.prepare("SELECT value FROM semantic_meta WHERE key='identity'").get()?.value
+    if (stored === undefined) { reader.close(); return }
+    if (stored !== identity) throw new Error('Semantic cache model or chunk settings differ; use a separate index path')
+    sqliteVec.load(reader)
+    reader.enableLoadExtension(false)
+    reader.exec('PRAGMA busy_timeout=3000')
+    const sourceUri = pathToFileURL(resolve(config.path))
+    sourceUri.searchParams.set('mode', 'ro')
+    reader.prepare('ATTACH DATABASE ? AS source').run(sourceUri.href)
+    db = reader
+    cacheReadOnly = true
+    assertIdentity()
+  } catch (error) {
+    if (reader) { try { reader.close() } catch {} }
+    db = null
+    if (error.message.includes('model or chunk settings differ')) throw error
+    // The owner may still be creating the cache/schema. Retry on the next tick.
+  }
+}
+
+function openCache() {
+  assertLease()
+  if (cacheReadOnly) { db.close(); db = null; cacheReadOnly = false }
+  if (db) { assertIdentity(); return }
   closeSync(openSync(vectorPath, 'a', 0o600))
   db = new DatabaseSync(vectorPath, { allowExtension: true })
   const applicationId = db.prepare('PRAGMA application_id').get().application_id
@@ -61,22 +134,20 @@ async function initialize() {
     CREATE TABLE IF NOT EXISTS semantic_chunks(id INTEGER PRIMARY KEY,event_id INTEGER NOT NULL,
       ordinal INTEGER NOT NULL,text TEXT NOT NULL,UNIQUE(event_id,ordinal));
     CREATE INDEX IF NOT EXISTS semantic_chunks_event ON semantic_chunks(event_id);`)
-  const identity = JSON.stringify({ version: 1, model: options.model, dtype: 'q8', pooling: 'mean',
-    normalize: true, chunkChars: options.chunkChars, prefix: 'e5' })
   const stored = db.prepare("SELECT value FROM semantic_meta WHERE key='identity'").get()?.value
-  if (stored !== identity) {
-    db.exec('DROP TABLE IF EXISTS semantic_vectors; DELETE FROM semantic_chunks; DELETE FROM semantic_documents; DELETE FROM semantic_meta;')
-    db.prepare("INSERT INTO semantic_meta VALUES('identity',?)").run(identity)
-  }
-  dimension = Number(db.prepare("SELECT value FROM semantic_meta WHERE key='dimension'").get()?.value) || null
+  if (stored === undefined) db.prepare("INSERT INTO semantic_meta VALUES('identity',?)").run(identity)
+  assertIdentity()
+}
+
+function cleanOrphans() {
+  assertIdentity()
   // A terminated worker may leave a partially embedded document. It was never
   // made visible through semantic_documents; discard those chunks on restart.
   transaction(() => {
     if (dimension) db.exec('DELETE FROM semantic_vectors WHERE rowid IN (SELECT c.id FROM semantic_chunks c LEFT JOIN semantic_documents d ON d.event_id=c.event_id WHERE d.event_id IS NULL)')
     db.exec('DELETE FROM semantic_chunks WHERE event_id NOT IN (SELECT event_id FROM semantic_documents)')
   })
-  extractor = model
-  status({ phase: 'indexing', ready: true })
+
 }
 
 async function embed(texts) {
@@ -84,8 +155,10 @@ async function embed(texts) {
   const vectors = output.tolist()
   if (!dimension) {
     dimension = vectors[0].length
-    db.exec(`CREATE VIRTUAL TABLE semantic_vectors USING vec0(embedding float[${dimension}] distance_metric=cosine)`)
-    db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('dimension',?)").run(String(dimension))
+    transaction(() => {
+      db.exec(`CREATE VIRTUAL TABLE semantic_vectors USING vec0(embedding float[${dimension}] distance_metric=cosine)`)
+      db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('dimension',?)").run(String(dimension))
+    })
   }
   return vectors.map(vector => new Float32Array(vector))
 }
@@ -96,8 +169,15 @@ function removeDocument(eventId) {
   db.prepare('DELETE FROM semantic_documents WHERE event_id=?').run(eventId)
 }
 function transaction(fn) {
-  db.exec('BEGIN')
-  try { fn(); db.exec('COMMIT') } catch (error) { db.exec('ROLLBACK'); throw error }
+  assertLease()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    if (leaseToken && db.prepare("SELECT value FROM semantic_meta WHERE key='writer'").get()?.value !== leaseToken) {
+      throw new Error('Semantic cache writer lease was replaced; retry refresh')
+    }
+    fn()
+    db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
 }
 
 async function serveQueries() {
@@ -110,6 +190,27 @@ async function serveQueries() {
 
 async function refresh() {
   await initialize()
+  if (!await acquireLease()) {
+    if (!stopping && !retryTimer) retryTimer = setTimeout(() => {
+      retryTimer = null
+      jobs.push({ type: 'refresh' })
+      void drain()
+    }, 1000)
+    return
+  }
+  try {
+    openCache()
+    // Fence every SQLite write as well as holding a heartbeat lease: a process
+    // paused beyond the stale interval cannot resume writes over a new owner.
+    const token = randomUUID()
+    transaction(() => db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('writer',?)").run(token))
+    leaseToken = token
+    cleanOrphans()
+    await reconcile()
+  } finally { await unlock() }
+}
+
+async function reconcile() {
   status({ phase: 'indexing', ready: true, done: 0, total: db.prepare('SELECT count(*) AS n FROM source.events').get().n,
     error: null, lastError: null })
   // Remove absent/replaced source rows before adding anything. This also handles
@@ -149,8 +250,8 @@ async function refresh() {
           await yieldTurn()
           await serveQueries()
         }
-        db.prepare('INSERT INTO semantic_documents(event_id,session_id,seq,hash,source_text) VALUES(?,?,?,?,?)')
-          .run(event.id, event.session_id, event.seq, hash, event.text)
+        transaction(() => db.prepare('INSERT INTO semantic_documents(event_id,session_id,seq,hash,source_text) VALUES(?,?,?,?,?)')
+          .run(event.id, event.session_id, event.seq, hash, event.text))
       } catch (error) {
         transaction(() => { removeDocument(event.id) })
         throw error
@@ -173,6 +274,7 @@ async function search(q) {
   const text = String(q.query ?? q.text ?? '').trim()
   if (!text) throw new Error('Semantic query must not be empty')
   const empty = { totalHits: 0, totalSessions: 0, truncated: false, sessions: [] }
+  assertIdentity()
   if (!dimension || (Array.isArray(q.roles) && !q.roles.length)) return empty
   let vector = cache.get(text)
   if (vector) { cache.delete(text); cache.set(text, vector) }
@@ -183,6 +285,7 @@ async function search(q) {
       while (cache.size > options.queryCacheSize) cache.delete(cache.keys().next().value)
     }
   }
+  assertIdentity()
   const where = ['e.text=d.source_text', 'e.session_id=d.session_id', 'e.seq=d.seq']
   const params = []
   if (q.from !== undefined) { where.push('e.time>=?'); params.push(q.from) }
@@ -229,6 +332,13 @@ async function search(q) {
 }
 
 parentPort.on('message', job => {
+  if (job.type === 'close') {
+    stopping = true
+    clearTimeout(retryTimer)
+    void unlock().finally(() => parentPort.postMessage({ closed: true }))
+    return
+  }
+  if (stopping) return
   if (job.type === 'search') {
     if (!state.ready) { reply(job.id, undefined, new Error('Semantic search is not ready')); return }
     if (queries.length >= 8) { reply(job.id, undefined, new Error('Semantic search queue is full')); return }
@@ -240,7 +350,7 @@ async function drain() {
   if (running) return
   running = true
   try {
-    while (jobs.length || queries.length) {
+    while (!stopping && (jobs.length || queries.length)) {
       await serveQueries()
       const job = jobs.shift()
       if (!job) continue

@@ -19,7 +19,7 @@ function harness(locale = 'en') {
   const render = () => {let count=0; while(dirty) {assert.ok(++count<20); dirty=false; cursor=0; tree=Page(); pending.splice(0).forEach(fn=>fn())}; return tree}
   const nodes = () => {render(); const result=[]; const walk = node => {if (node && typeof node==='object') {result.push(node); node.children?.forEach(walk)}}; walk(tree); return result}
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || ''
-  const button = label => nodes().find(node => node.type==='button' && (text(node)===label || (node.props.className === 'sfts-card' && text(node.children[0]?.children[0]) === label)))
+  const button = label => nodes().find(node => node.type==='button' && (text(node)===label || (node.props.className === 'sfts-card-head sfts-hit' && text(node.children[0]) === label)))
   const input = () => nodes().find(node => node.type==='input' && node.props.type==='search')
   const flush = async () => {for(let n=0;n<8;n++) await Promise.resolve(); render()}
   render()
@@ -50,5 +50,6 @@ test('localized semantic states, disabled configuration tooltip, polling abort a
   const app=harness('zh');const initial=app.requests[0];app.poll();assert.equal(initial.options.signal.aborted,true);initial.resolve(status('ready'));await app.flush();app.requests.at(-1).resolve(status('disabled'));await app.flush()
   assert.equal(app.button('语义').props.disabled,true);assert.ok(app.nodes().some(n=>n.props.title?.includes('配置嵌入模型')))
   for(const phase of ['loading','indexing','ready','error']) {app.poll();app.requests.at(-1).resolve({...status(phase),semantic:{...status(phase).semantic,error:'unavailable'}});await app.flush();assert.equal(app.button('语义').props.disabled,false);assert.ok(app.nodes().some(n=>n.props.role==='status' && app.text(n).includes(phase==='error'?'unavailable':phase==='loading'?'加载': '2/4')))}
+  app.poll(); app.requests.at(-1).resolve(status('waiting')); await app.flush(); assert.ok(app.nodes().some(n=>n.props.role==='status' && app.text(n).includes('等待其他进程')))
   app.poll(); const pending=app.requests.at(-1);app.unmount();assert.equal(pending.options.signal.aborted,true);assert.equal(app.intervals.size,0);pending.resolve(status('disabled'));await app.flush()
 })

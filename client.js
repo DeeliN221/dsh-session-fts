@@ -18,8 +18,15 @@ window.__ModuleLoader__.load({
         none: '没有找到匹配内容。可以减少关键词或放宽时间范围。', more: '加载更多', untitled: '未命名会话',
         hits: '{n} 处', indexed: '已索引 {sessions} 个会话 · {docs} 条消息', indexing: '正在索引 {done}/{total}',
         reindex: '重新扫描', rebuild: '重建索引', error: '搜索失败：{msg}', hint: '输入关键词开始搜索。索引只保存在本机。',
+        locating: '正在加载并定位消息… 已加载 {pages} 页历史', located: '已定位消息 #{seq}',
+        navigationArchived: '此会话已归档。请先恢复，再打开此搜索结果。',
+        restoreAndLocate: '恢复并定位', restoring: '正在恢复会话…', navigationRestoreFailed: '无法恢复此会话，请重试。',
+        navigationUnsupported: '当前 DSH 无法精确定位这条消息。', navigationMissing: '消息不存在或已删除，请重新扫描索引。',
+        navigationLimit: '历史过长，已停止自动加载。请在会话中加载更早消息后重试。', navigationStalled: '历史加载未能前进，请检查连接后重试。',
+        navigationView: '无法显示目标消息，请切换到聊天视图后重试。', navigationTimeout: '定位超时，请重试。', navigationFailed: '无法打开目标消息，请检查连接后重试。',
         open: '打开会话', mode: '搜索方式', titleMode: '标题', fulltextMode: '全文', semanticMode: '语义',
         searching: '正在搜索…', semanticDisabled: '语义搜索未启用；请先配置嵌入模型。',
+        semanticWaiting: '等待其他进程完成索引，已提交内容仍可查询',
         semanticLoading: '正在加载语义搜索…', semanticIndexing: '正在建立语义索引 {indexed}/{total}',
         semanticReady: '语义搜索就绪 · {indexed}/{total}', semanticError: '语义搜索出错：{msg}',
       },
@@ -32,8 +39,15 @@ window.__ModuleLoader__.load({
         none: 'No matches. Try fewer terms or a wider time range.', more: 'Load more', untitled: 'Untitled session',
         hits: '{n} hits', indexed: 'Indexed {sessions} sessions · {docs} messages', indexing: 'Indexing {done}/{total}',
         reindex: 'Rescan', rebuild: 'Rebuild index', error: 'Search failed: {msg}', hint: 'Type to search. The index stays on this machine.',
+        locating: 'Loading and locating message… {pages} history pages loaded', located: 'Located message #{seq}',
+        navigationArchived: 'This session is archived. Restore it before opening this search result.',
+        restoreAndLocate: 'Restore and locate', restoring: 'Restoring session…', navigationRestoreFailed: 'Could not restore the session. Retry.',
+        navigationUnsupported: 'This DSH version cannot locate this message precisely.', navigationMissing: 'Message is missing or deleted. Rescan the index.',
+        navigationLimit: 'History loading limit reached. Load earlier messages in the conversation and retry.', navigationStalled: 'History loading made no progress. Check the connection and retry.',
+        navigationView: 'Cannot display this message. Switch to the Chat view and retry.', navigationTimeout: 'Message navigation timed out. Retry.', navigationFailed: 'Cannot open this message. Check the connection and retry.',
         open: 'Open session', mode: 'Search mode', titleMode: 'Title', fulltextMode: 'Full text', semanticMode: 'Semantic',
         searching: 'Searching…', semanticDisabled: 'Semantic search is disabled; configure an embedding model to enable it.',
+        semanticWaiting: 'Waiting for another process to finish indexing. Committed content is still searchable.',
         semanticLoading: 'Loading semantic search…', semanticIndexing: 'Indexing semantic search {indexed}/{total}',
         semanticReady: 'Semantic search ready · {indexed}/{total}', semanticError: 'Semantic search error: {msg}',
       },
@@ -121,7 +135,9 @@ window.__ModuleLoader__.load({
 .sfts-list{display:flex;flex-direction:column;gap:10px}
 .sfts-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;
   cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
-.sfts-card:hover,.sfts-card:focus-visible{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
+.sfts-card:hover{border-color:var(--dsw-alias-border-l2)}
+.sfts-hit{border:0;background:transparent;color:inherit;text-align:left;font:inherit;width:100%;cursor:pointer;padding:4px;border-radius:4px}
+.sfts-hit:hover{background:var(--dsw-alias-bg-layer-2)}
 .sfts-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
 .sfts-card-title{min-width:0;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sfts-card-sub{font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap;flex-shrink:0}
@@ -142,7 +158,192 @@ window.__ModuleLoader__.load({
 @media(pointer:coarse){.sfts-btn,.sfts-chip,.sfts-select,.sfts-date{min-height:48px}.sfts-check{min-height:48px}}
 `
 
-    function makePage({ useT, openSession }) {
+    // Public Controllers own history and projections. This adapter only bridges the
+    // missing public Chat reveal API to the exact stable node seat (never text scanning).
+    function makeNavigation(ctx) {
+      let current = null
+      let snapshot = { phase: 'idle' }
+      const listeners = new Set()
+      const publish = value => { snapshot = value; listeners.forEach(fn => fn()) }
+      const cancel = () => { current?.abort(); current = null; publish({ phase: 'idle' }) }
+      const failure = code => Object.assign(new Error(code), { code })
+      const wait = (promise, signal) => new Promise((resolve, reject) => {
+        const aborted = () => { cleanup(); reject(signal.reason) }
+        const cleanup = () => signal.removeEventListener('abort', aborted)
+        if (signal.aborted) { reject(signal.reason); return }
+        signal.addEventListener('abort', aborted, { once: true })
+        Promise.resolve(promise).then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
+      })
+      const frame = signal => wait(new Promise(resolve => requestAnimationFrame(resolve)), signal)
+      const waitForPager = (session, signal) => new Promise((resolve, reject) => {
+        let stop = () => {}, settled = false
+        const finish = error => {
+          if (settled) return
+          settled = true
+          stop()
+          signal.removeEventListener('abort', aborted)
+          if (error) reject(error)
+          else resolve()
+        }
+        const aborted = () => finish(signal.reason)
+        const check = () => {
+          if (signal.aborted) aborted()
+          else if (!session.getSnapshot().loadingOlder) finish()
+        }
+        signal.addEventListener('abort', aborted, { once: true })
+        stop = session.subscribe(check)
+        if (settled) stop()
+        check()
+      })
+      const stableSeat = async (seat, signal) => {
+        let previous, stable = 0
+        for (let attempt = 0; attempt < 90; attempt++) {
+          await frame(signal)
+          signal.throwIfAborted()
+          if (!seat.isConnected) throw failure('navigationView')
+          let blocked = false
+          for (let ancestor = seat; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.hasAttribute('hidden') || ['reveal', 'collapse'].includes(ancestor.dataset?.chatMotion)) blocked = true
+          }
+          const rect = seat.getBoundingClientRect()
+          const geometry = [rect.x, rect.y, rect.width, rect.height]
+          const visible = !blocked && rect.width > 0 && rect.height > 0 && seat.getClientRects().length > 0
+          stable = visible && previous?.every((value, index) => Math.abs(value - geometry[index]) < 0.5) ? stable + 1 : 0
+          previous = visible ? geometry : undefined
+          if (stable >= 3) return
+        }
+        throw failure('navigationView')
+      }
+      const open = async (sessionId, seq) => {
+        cancel()
+        const controller = new AbortController()
+        current = controller
+        let reference, stopProjection = () => {}, stopInput = () => {}
+        try {
+          const ui = ctx.get('uiWorkspace')
+          if (!ui?.openSession) throw failure('navigationUnsupported')
+          const archived = ctx.get('workspaces')?.list?.getSnapshot().archivedSessionIds
+          if (archived?.includes(sessionId)) { publish({ phase: 'archived', sessionId, seq }); return }
+          if (seq === undefined) { ui.openSession(sessionId); return }
+          if (!Number.isSafeInteger(seq) || seq < 0) throw failure('navigationMissing')
+          const sessions = ctx.get('sessions')
+          const conversation = ctx.get('uiConversation')
+          const layout = ctx.get('layout')
+          if (!sessions?.retain || !conversation?.binding || !layout?.beginNavigation) throw failure('navigationUnsupported')
+          ui.openSession(sessionId)
+          // openSession itself advances layout navigation; acquire our guard afterwards.
+          const signal = AbortSignal.any([controller.signal, layout.beginNavigation(), AbortSignal.timeout(120000)])
+          const interrupted = () => controller.abort()
+          for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) document.addEventListener(type, interrupted, { passive: true })
+          stopInput = () => { for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) document.removeEventListener(type, interrupted) }
+          publish({ phase: 'loading', seq, pages: 0 })
+          reference = sessions.retain(sessionId, { source: 'controllerOperation', signal })
+          const binding = await wait(reference.ready, signal)
+          const session = binding.session
+          const projection = conversation.binding(binding).target('chat')
+          stopProjection = projection.subscribe(() => {})
+          let event
+          // loadOlder has a bounded page size. Never use the unbounded shared
+          // loadThrough loop: a superseded search must not keep paging a cold log.
+          for (let page = 0; ; ) {
+            signal.throwIfAborted()
+            const entries = binding.eventSource.getSnapshot().entries
+            event = entries.find(entry => entry.event.seq === seq)?.event
+            if (event) break
+            if (session.getSnapshot().openState !== 'open') throw failure('navigationMissing')
+            const head = entries[0]?.event.seq
+            if (!session.getSnapshot().hasMore || (head !== undefined && head <= seq)) throw failure('navigationMissing')
+            if (session.getSnapshot().loadingOlder) {
+              await waitForPager(session, signal)
+              continue
+            }
+            if (page >= 40) throw failure('navigationLimit')
+            page++
+            await wait(session.loadOlder(), signal)
+            await waitForPager(session, signal)
+            signal.throwIfAborted()
+            const nextHead = binding.eventSource.getSnapshot().entries[0]?.event.seq
+            if (nextHead === head) throw failure('navigationStalled')
+            publish({ phase: 'loading', seq, pages: page })
+          }
+          signal.throwIfAborted()
+          // Settled Assistant and Tool rows can anchor before their indexed event.
+          // Resolve durable payload seq, never nearest seq/turn or snippet equality.
+          const toolContains = root => root?.seq === seq
+            || (event.type === 'tool/call' && root?.callId === String(event.data.callId))
+            || root?.subCalls?.some(toolContains)
+          let node
+          for (let attempt = 0; attempt < 60; attempt++) {
+            signal.throwIfAborted()
+            node = projection.getSnapshot()?.nodes.values().find(candidate => {
+              const data = candidate.data
+              return data?.seq === seq || data?.finalNode?.seq === seq || toolContains(data?.root)
+            })
+            if (node) break
+            await frame(signal)
+          }
+          if (!node) throw failure('navigationUnsupported')
+          let seat
+          for (let attempt = 0; attempt < 60; attempt++) {
+            signal.throwIfAborted()
+            seat = document.querySelector(`[data-chat-node-key="${globalThis.CSS.escape(node.key)}"]:not([data-chat-group-part="reasoning"])`)
+            if (seat) break
+            await frame(signal)
+          }
+          if (!seat) throw failure('navigationView')
+          // DSH supports beforematch on folded ancestors. Ask their owners to
+          // reveal state instead of mutating React-owned hidden attributes.
+          for (let ancestor = seat; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.hasAttribute('hidden')) ancestor.dispatchEvent(new Event('beforematch'))
+          }
+          await stableSeat(seat, signal)
+          seat.scrollIntoView({ block: 'center', behavior: 'instant' })
+          seat.setAttribute('tabindex', '-1')
+          seat.focus({ preventScroll: true })
+          seat.addEventListener('blur', () => seat.removeAttribute('tabindex'), { once: true })
+          // Opening Chat and fold owners may still reconcile their viewport.
+          // Declare success only once the landing itself has stopped moving.
+          await stableSeat(seat, signal)
+          const viewport = seat.closest('[data-conversation-scroll]') || seat.closest('[data-chat-following-tail]')
+          const target = seat.getBoundingClientRect()
+          const bounds = viewport?.getBoundingClientRect()
+          if (bounds && (target.bottom <= bounds.top || target.top >= bounds.bottom)) throw failure('navigationView')
+          publish({ phase: 'done', seq })
+        } catch (error) {
+          if (current !== controller) return
+          if (controller.signal.aborted || error?.name === 'AbortError') publish({ phase: 'idle' })
+          else publish({ phase: 'error', code: error?.name === 'TimeoutError' ? 'navigationTimeout' : error?.code || 'navigationFailed' })
+        } finally {
+          stopProjection()
+          stopInput()
+          reference?.release()
+          if (current === controller) current = null
+        }
+      }
+      const canRestore = () => typeof ctx.get('uiWorkspace')?.unarchiveSession === 'function'
+      const restore = async () => {
+        if (snapshot.phase !== 'archived' || !canRestore()) return
+        const target = snapshot
+        cancel()
+        const controller = new AbortController()
+        current = controller
+        const signal = AbortSignal.any([controller.signal, ctx.get('layout')?.beginNavigation?.() || controller.signal, AbortSignal.timeout(120000)])
+        publish({ ...target, phase: 'restoring' })
+        try {
+          await wait(ctx.get('uiWorkspace').unarchiveSession(target.sessionId), signal)
+          signal.throwIfAborted()
+          if (current === controller) await open(target.sessionId, target.seq)
+        } catch (error) {
+          if (current === controller) publish(controller.signal.aborted || error?.name === 'AbortError'
+            ? { phase: 'idle' } : { ...target, code: 'navigationRestoreFailed' })
+        } finally {
+          if (current === controller) current = null
+        }
+      }
+      return { open, cancel, restore, canRestore, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) }, getSnapshot: () => snapshot }
+    }
+
+    function makePage({ useT, openSession, cancelNavigation }) {
       return function SessionFtsPage() {
         const t = useT()
         const [query, setQuery] = useState('')
@@ -190,6 +391,7 @@ window.__ModuleLoader__.load({
             [setCustomFrom, customFrom], [setCustomTo, customTo], [setCwd, cwd],
             [setRoles, roles], [setSort, sort], [setSubagents, subagents]]).get(setter)
           if (Object.is(current, next)) return
+          cancelNavigation()
           abortRef.current?.abort()
           clearTimeout(debounceRef.current)
           setter(next)
@@ -241,6 +443,7 @@ window.__ModuleLoader__.load({
         const indexing = status?.indexing?.phase === 'indexing'
         const semantic = status?.semantic
         const semanticText = semantic?.phase === 'disabled' ? t('semanticDisabled')
+          : semantic?.phase === 'waiting' ? t('semanticWaiting')
           : semantic?.phase === 'error' ? fmt(t('semanticError'), { msg: semantic.error || t('semanticMode') })
           : semantic?.phase === 'ready' || semantic?.phase === 'indexing'
             ? fmt(t(semantic.phase === 'ready' ? 'semanticReady' : 'semanticIndexing'), { indexed: semantic.indexed, total: semantic.total })
@@ -311,15 +514,15 @@ window.__ModuleLoader__.load({
             !value && state.status !== 'loading' && state.status !== 'error' ? h('div', { className: 'sfts-empty' }, t('hint')) : null,
             value && value.sessions.length === 0 ? h('div', { className: 'sfts-empty' }, t('none')) : null,
             value ? h('div', { className: 'sfts-list' },
-              value.sessions.map(session => h('button', {
-                key: session.sessionId, type: 'button', className: 'sfts-card', title: t('open'),
-                onClick: () => openSession(session.sessionId),
-              },
-              h('div', { className: 'sfts-card-head' },
+              value.sessions.map(session => h('article', { key: session.sessionId, className: 'sfts-card' },
+              h('button', { type: 'button', className: 'sfts-card-head sfts-hit', title: t('open'),
+                onClick: () => openSession(session.sessionId) },
                 h('span', { className: 'sfts-card-title' }, session.title || t('untitled')),
                 h('span', { className: 'sfts-card-sub' },
                   `${baseName(session.cwd)} · ${fmt(t('hits'), { n: session.hits })} · ${fmtTime(session.lastMatchAt)}`)),
-              session.matches.map(match => h('div', { key: match.seq, className: 'sfts-match' },
+              session.matches.map(match => h('button', { key: match.seq, type: 'button', className: 'sfts-match sfts-hit',
+                onClick: () => openSession(session.sessionId, match.seq),
+                'aria-label': `${t('open')} · ${t(match.role)} · ${fmtTime(match.time)} · #${match.seq}` },
                 h('span', { className: 'sfts-role' }, t(match.role)),
                 h('span', { className: 'sfts-snippet' },
                   h(Highlight, { text: match.snippet, terms }),
@@ -338,11 +541,26 @@ window.__ModuleLoader__.load({
         const subscribeLocale = fn => ctx.locale.subscribe(fn)
         const localeSnapshot = () => ctx.locale.getSnapshot()
         function useT() { useSyncExternalStore(subscribeLocale, localeSnapshot); return t }
-        function openSession(id) {
-          const ui = ctx.get('uiWorkspace')
-          if (ui && typeof ui.openSession === 'function') ui.openSession(id)
+        const navigation = makeNavigation(ctx)
+        ctx.effect(() => () => navigation.cancel(), 'session-fts: navigation lifetime')
+        function NavigationNotice() {
+          const translate = useT()
+          const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
+          if (!state || state.phase === 'idle') return null
+          const message = state.phase === 'loading' ? fmt(translate('locating'), { pages: state.pages ?? 0 })
+            : state.phase === 'restoring' ? translate('restoring')
+            : state.phase === 'archived' ? translate(state.code || 'navigationArchived')
+            : state.phase === 'error' ? translate(state.code) : fmt(translate('located'), { seq: state.seq })
+          return h('div', { role: state.phase === 'error' || state.code ? 'alert' : 'status', 'aria-live': 'polite',
+            style: { pointerEvents: 'none', position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', maxWidth: 'min(90vw, 560px)', padding: '10px 14px', borderRadius: 8,
+              background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-border-l2)', fontSize: 13 } },
+            message,
+            state.phase === 'archived' && navigation.canRestore() ? h('button', { type: 'button', onClick: navigation.restore,
+              style: { pointerEvents: 'auto', marginLeft: 12, padding: '6px 10px', font: 'inherit', color: 'inherit', cursor: 'pointer', borderRadius: 4,
+                border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-2)' } }, translate('restoreAndLocate')) : null)
         }
-        const Page = makePage({ useT, openSession })
+        ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'session-fts-navigation', locale: NS }, NavigationNotice))
+        const Page = makePage({ useT, openSession: navigation.open, cancelNavigation: navigation.cancel })
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL, locale: NS }, Page))
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL, order: 30, label: () => t('title'), locale: NS,

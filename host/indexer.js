@@ -42,7 +42,7 @@ export class Indexer {
   /** Drop the index and rebuild it from the logs. */
   rebuild() {
     return this._enqueue(async () => {
-      this.store.clear()
+      await this.store.clear()
       await this._reconcileAll()
     })
   }
@@ -108,8 +108,18 @@ export class Indexer {
         this.state.done++
         await yieldTurn()
       }
-      for (const id of this.store.sessionIds()) {
-        if (!seen.has(id)) this.store.deleteSession(id)
+      // A process-local live list is only a partial view of a shared corpus.
+      // Prune only after a successful authoritative persistence listing, and
+      // recheck each missing id immediately before removing its derived rows.
+      const persistence = this.ctx.get('sessionPersistence')
+      if (persistence !== undefined) for (const id of await this.store.sessionIds()) {
+        if (seen.has(id) || this.ctx.sessions.get(id) !== undefined) continue
+        // Another process may own a live-only Session not visible in this
+        // persistence provider yet. Its absence is not an authoritative delete.
+        const row = await this.store.sessionRow(id)
+        if (row?.stamp?.startsWith('live:')) continue
+        if (await persistence.stat(id) !== undefined) continue
+        await this.store.deleteSession(id)
       }
       this.onCommit()
       if (failures.length) throw new AggregateError(failures, `${failures.length} sessions failed to index; retry scan`)
@@ -131,7 +141,7 @@ export class Indexer {
       if (persisted.formatStatus === 'migration-required') return
       stamp = `rev:${String(persisted.revision)}`
     }
-    const stored = this.store.sessionRow(sessionId)
+    const stored = await this.store.sessionRow(sessionId)
     if (stored !== undefined && stored.stamp === stamp) return
 
     let header
@@ -175,7 +185,7 @@ export class Indexer {
       } catch { /* untitled */ }
     }
 
-    this.store.commit({
+    await this.store.commit({
       id: sessionId,
       cwd: header.cwd ?? null,
       parent: header.parentSession ?? null,
