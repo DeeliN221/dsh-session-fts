@@ -18,6 +18,8 @@ export class SemanticSearch {
     const worker = new Worker(new URL('./semantic-worker.js', import.meta.url), { workerData: this.config })
     this.worker = worker
     worker.on('message', message => {
+      if (message.closed) { this.closedAck?.(); return }
+      if (this.closed) return
       if (message.status) { this.status = message.status; return }
       const request = this.pending.get(message.id)
       if (!request) return
@@ -77,6 +79,14 @@ export class SemanticSearch {
     // Termination also interrupts downloads/inference without waiting for the model.
     const worker = this.worker
     this.worker = null
-    if (worker) await worker.terminate()
+    if (worker) {
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 500)
+        this.closedAck = () => { clearTimeout(timer); resolve() }
+        worker.postMessage({ type: 'close' })
+      })
+      this.closedAck = null
+      await worker.terminate()
+    }
   }
 }
