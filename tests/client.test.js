@@ -19,7 +19,7 @@ function harness(locale = 'en') {
   const render = () => {let count=0; while(dirty) {assert.ok(++count<20); dirty=false; cursor=0; tree=Page(); pending.splice(0).forEach(fn=>fn())}; return tree}
   const nodes = () => {render(); const result=[]; const walk = node => {if (node && typeof node==='object') {result.push(node); node.children?.forEach(walk)}}; walk(tree); return result}
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || ''
-  const button = label => nodes().find(node => node.type==='button' && (text(node)===label || (node.props.className === 'sfts-card' && text(node.children[0]?.children[0]) === label)))
+  const button = label => nodes().find(node => node.type==='button' && (text(node)===label || (node.props.className === 'sfts-card-head sfts-hit' && text(node.children[0]) === label)))
   const input = () => nodes().find(node => node.type==='input' && node.props.type==='search')
   const flush = async () => {for(let n=0;n<8;n++) await Promise.resolve(); render()}
   render()
