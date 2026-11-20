@@ -8,7 +8,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, openSync, closeSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { tokenizeForIndex, makeSnippet } from './text.js'
 
@@ -24,10 +24,29 @@ export class FtsStore {
   constructor(path, optionsKey) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.path = path
+    this.revision = 0
+    try { closeSync(openSync(path, 'wx', 0o600)) } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+    }
     this.db = new DatabaseSync(path)
+    try { this._assertOwnership() } catch (error) { this.db.close(); throw error }
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000;')
     this._migrate(optionsKey)
     this._prepare()
+  }
+
+  _assertOwnership() {
+    const owner = this.db.prepare('PRAGMA application_id').get().application_id
+    const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()
+    if (owner !== 0 && owner !== 1146308166) throw new Error('session-fts: index path belongs to another application')
+    if (owner === 0 && tables.length > 0) {
+      const names = new Set(tables.map(row => row.name))
+      const expected = ['meta', 'sessions', 'events', 'fts', 'fts_data', 'fts_idx', 'fts_config']
+      if (names.size !== expected.length || expected.some(name => !names.has(name))) throw new Error('session-fts: refusing unrecognized database')
+      const schema = this.db.prepare("SELECT value FROM meta WHERE key='schema'").get()?.value
+      if (schema !== SCHEMA_VERSION) throw new Error('session-fts: refusing unrecognized database schema')
+    }
+    this.db.exec('PRAGMA application_id=1146308166')
   }
 
   _migrate(optionsKey) {
@@ -102,6 +121,7 @@ export class FtsStore {
       }
       this._upsert.run({ ...row, doc_count: (previous?.doc_count ?? 0) + added })
       this.db.exec('COMMIT')
+      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -117,6 +137,7 @@ export class FtsStore {
       this._deleteEvents.run(id)
       this._deleteSession.run(id)
       this.db.exec('COMMIT')
+      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -129,6 +150,7 @@ export class FtsStore {
     try {
       this.db.exec("DELETE FROM events; DELETE FROM sessions; INSERT INTO fts(fts) VALUES('delete-all');")
       this.db.exec('COMMIT')
+      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -160,14 +182,14 @@ export class FtsStore {
     const params = [q.match]
     if (q.from !== undefined) { where.push('e.time >= ?'); params.push(q.from) }
     if (q.to !== undefined) { where.push('e.time <= ?'); params.push(q.to) }
-    if (q.roles !== undefined && q.roles.length > 0) {
+    if (q.roles !== undefined) {
       where.push(`e.role IN (${q.roles.map(() => '?').join(', ')})`)
       params.push(...q.roles)
     }
     if (q.cwd !== undefined) { where.push('s.cwd = ?'); params.push(q.cwd) }
     if (!q.includeSubagents) where.push("(s.origin IS NULL OR s.origin != 'subagent')")
     if (q.excludeSessionId !== undefined) { where.push('e.session_id != ?'); params.push(q.excludeSessionId) }
-    const sql = `SELECT e.session_id AS sid, e.seq, e.role, e.time, e.text, bm25(fts) AS score
+    const sql = `SELECT e.id, e.session_id AS sid, e.seq, e.role, e.time, bm25(fts) AS score
       FROM fts JOIN events e ON e.id = fts.rowid JOIN sessions s ON s.id = e.session_id
       WHERE ${where.join(' AND ')} ORDER BY score LIMIT ${RAW_ROW_CAP + 1}`
     const rows = this.db.prepare(sql).all(...params)
@@ -183,7 +205,7 @@ export class FtsStore {
       group.hits++
       if (row.time > group.lastTime) group.lastTime = row.time
       if (group.matches.length < SNIPPETS_PER_SESSION) {
-        group.matches.push({ seq: row.seq, role: row.role, time: row.time, snippet: makeSnippet(row.text, q.terms) })
+        group.matches.push({ id: row.id, seq: row.seq, role: row.role, time: row.time })
       }
     }
     const ordered = [...groups.values()]
@@ -199,10 +221,37 @@ export class FtsStore {
         subagent: meta?.origin === 'subagent',
         hits: group.hits,
         lastMatchAt: group.lastTime,
-        matches: group.matches,
+        matches: group.matches.map(({ id, ...match }) => ({
+          ...match,
+          snippet: makeSnippet(this.db.prepare('SELECT text FROM events WHERE id = ?').get(id).text, q.terms),
+        })),
       }
     })
     return { totalHits: rows.length, totalSessions: ordered.length, truncated, sessions: page }
+  }
+
+  /** Search title metadata without reading message documents or logs. */
+  searchTitles(q) {
+    const where = ["title IS NOT NULL"]
+    const params = []
+    for (const term of q.terms) {
+      where.push("instr(lower(title), lower(?)) > 0")
+      params.push(term)
+    }
+    if (q.from !== undefined) { where.push('updated_at >= ?'); params.push(q.from) }
+    if (q.to !== undefined) { where.push('updated_at <= ?'); params.push(q.to) }
+    if (q.cwd !== undefined) { where.push('cwd = ?'); params.push(q.cwd) }
+    if (!q.includeSubagents) where.push("(origin IS NULL OR origin != 'subagent')")
+    if (q.excludeSessionId !== undefined) { where.push('id != ?'); params.push(q.excludeSessionId) }
+    const predicate = where.join(' AND ')
+    const total = this.db.prepare(`SELECT count(*) AS n FROM sessions WHERE ${predicate}`).get(...params).n
+    const rows = this.db.prepare(`SELECT * FROM sessions WHERE ${predicate} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`)
+      .all(...params, q.limit, q.offset)
+    return { totalHits: total, totalSessions: total, truncated: false, sessions: rows.map(row => ({
+      sessionId: row.id, title: row.title, cwd: row.cwd, createdAt: row.created_at,
+      updatedAt: row.updated_at, subagent: row.origin === 'subagent', hits: 1,
+      lastMatchAt: row.updated_at, matches: [],
+    })) }
   }
 
   close() {

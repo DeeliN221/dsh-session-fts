@@ -3,14 +3,16 @@
  *
  * Host half: owns a derived SQLite FTS5 index under the DSH home, keeps it in
  * step with the Session corpus, serves the Web page's search route, and
- * registers the `session_fts_search` agent tool. Everything stays on this
- * machine; no remote database or network call is involved.
+ * registers the `session_fts_search` agent tool. Inference and indexes stay on this
+ * machine; semantic warmup downloads model assets when not cached.
  */
 
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { FtsStore } from './host/store.js'
 import { Indexer } from './host/indexer.js'
+import { ResultCache } from './host/cache.js'
+import { SemanticSearch } from './host/semantic.js'
 import { compileQuery } from './host/text.js'
 
 export const name = 'session-fts'
@@ -26,11 +28,28 @@ function resolveConfig(config = {}) {
   const path = typeof config.path === 'string' && config.path !== '' ? config.path : join(home, 'session-fts.sqlite')
   if (!isAbsolute(path)) throw new TypeError('session-fts: path must be absolute')
   const int = (value, fallback, min, max) => {
-    const n = Number(value)
-    return Number.isInteger(n) && n >= min && n <= max ? n : fallback
+    if (value === undefined) return fallback
+    if (!Number.isSafeInteger(value) || value < min || value > max) throw new TypeError('session-fts: invalid integer configuration')
+    return value
   }
+  const semantic = config.semantic ?? {}
+  const minScore = semantic.minScore ?? 0.65
+  if (!Number.isFinite(minScore) || minScore < -1 || minScore > 1) throw new TypeError('session-fts: invalid minScore')
   return {
     path,
+    resultCacheSize: int(config.resultCacheSize, 64, 0, 1000),
+    resultCacheBytes: int(config.resultCacheBytes, 4 * 1024 * 1024, 1024, 64 * 1024 * 1024),
+    refreshIntervalMs: int(config.refreshIntervalMs, 60000, 5000, 3600000),
+    semantic: {
+      enabled: semantic.enabled !== false,
+      model: semantic.model ?? 'Xenova/multilingual-e5-small',
+      cacheDir: semantic.cacheDir ?? join(home, 'models'),
+      batchSize: int(semantic.batchSize, 8, 1, 64),
+      chunkChars: int(semantic.chunkChars, 800, 100, 4000),
+      queryCacheSize: int(semantic.queryCacheSize, 64, 0, 1000),
+      minScore,
+      maxCandidates: int(semantic.maxCandidates, 200, 1, 4000),
+    },
     tools: config.indexToolOutput === true,
     defaultDays: int(config.defaultDays, 30, 0, 36500),
     maxResults: int(config.maxResults, 20, 1, 200),
@@ -71,7 +90,11 @@ class SearchInputError extends Error {}
  * @returns {object} store query.
  */
 function normalizeRequest(input, config) {
-  const { terms, match } = compileQuery(input?.query)
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new SearchInputError('request must be an object')
+  if (typeof input.query !== 'string' || input.query.length > 500 || input.query.includes('\0')) throw new SearchInputError('query must contain 1–500 characters')
+  const mode = input.mode ?? 'fulltext'
+  if (!['title', 'fulltext', 'semantic'].includes(mode)) throw new SearchInputError('invalid search mode')
+  const { terms, match } = compileQuery(input.query)
   if (match === null) throw new SearchInputError('query must contain at least one letter or digit')
   let from = parseBound(input.from, 'from')
   const to = parseBound(input.to, 'to')
@@ -84,8 +107,11 @@ function normalizeRequest(input, config) {
   const roles = Array.isArray(input.roles) ? input.roles.filter(role => ROLES.includes(role)) : undefined
   const limit = Math.min(Math.max(Number.isInteger(input.limit) ? input.limit : config.maxResults, 1), 200)
   const offset = Number.isInteger(input.offset) && input.offset > 0 ? input.offset : 0
+  if (offset > 10000) throw new SearchInputError('offset must not exceed 10000')
   return {
     terms,
+    query: input.query.trim(),
+    mode,
     match,
     from,
     to,
@@ -150,6 +176,7 @@ function renderToolText(result, request, scopeLabel) {
 const TOOL_PARAMETERS = {
   type: 'object',
   properties: {
+    mode: { type: 'string', enum: ['title', 'fulltext', 'semantic'], description: 'Search titles, exact message terms (default), or meaning across languages. Semantic mode requires the local index to be ready.' },
     query: {
       type: 'string',
       description: 'Words or phrases to find. Chinese/Japanese/Korean text matches as a literal substring; '
@@ -184,6 +211,7 @@ function validateToolArgs(args) {
   for (const key of Object.keys(args)) {
     if (!Object.hasOwn(TOOL_PARAMETERS.properties, key)) throw new SearchInputError(`unknown argument: ${key}`)
   }
+  if (args.mode !== undefined && !['title', 'fulltext', 'semantic'].includes(args.mode)) throw new SearchInputError('invalid mode')
   if (typeof args.query !== 'string') throw new SearchInputError('query must be a string')
   if (args.scope !== undefined && args.scope !== 'workspace' && args.scope !== 'all') throw new SearchInputError('scope must be workspace or all')
   if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 50)) {
@@ -196,8 +224,24 @@ export function apply(ctx, rawConfig) {
   const optionsKey = JSON.stringify({ tools: config.tools, maxDocChars: config.maxDocChars, v: 1 })
   const store = new FtsStore(config.path, optionsKey)
   const indexer = new Indexer(ctx, store, config)
-  ctx.effect(() => () => {
-    indexer.dispose()
+  const cache = new ResultCache(config.resultCacheSize, config.resultCacheBytes)
+  const semantic = new SemanticSearch(config)
+  let semanticTimer
+  let closed = false
+  indexer.onCommit = () => {
+    if (closed || !config.semantic.enabled || semanticTimer !== undefined) return
+    semanticTimer = setTimeout(() => {
+      semanticTimer = undefined
+      semantic.refresh().catch(error => ctx.logger?.warn?.(`session-fts: semantic indexing failed: ${String(error)}`))
+    }, config.liveDelayMs)
+    semanticTimer.unref()
+  }
+  ctx.effect(() => async () => {
+    closed = true
+    clearTimeout(semanticTimer)
+    await indexer.dispose()
+    await semantic.close()
+    cache.clear()
     store.close()
   }, 'session-fts: store')
 
@@ -209,18 +253,28 @@ export function apply(ctx, rawConfig) {
     const timer = setTimeout(() => {
       indexer.reconcileAll().catch(error => ctx.logger?.warn?.(`session-fts: initial index failed: ${String(error)}`))
     }, config.startupDelayMs)
-    return () => clearTimeout(timer)
+    const interval = setInterval(() => {
+      if (indexer.state.phase !== 'indexing') indexer.reconcileAll().catch(error => ctx.logger?.warn?.(`session-fts: scan failed: ${String(error)}`))
+    }, config.refreshIntervalMs)
+    interval.unref()
+    return () => { clearTimeout(timer); clearInterval(interval) }
   }, 'session-fts: initial index')
 
   async function search(input) {
     const request = normalizeRequest(input, config)
-    await indexer.settle()
-    return { request, result: store.search(request) }
+    if (request.mode === 'semantic') return { request, result: await semantic.search(request) }
+    const key = JSON.stringify(request)
+    let result = cache.get(key, store.revision)
+    if (result === undefined) {
+      result = request.mode === 'title' ? store.searchTitles(request) : store.search(request)
+      cache.set(key, store.revision, result)
+    }
+    return { request, result }
   }
 
   ctx.effect(() => ctx.tools.register({
     name: 'session_fts_search',
-    description: 'Full-text search over earlier sessions on this machine (local index). Finds Chinese text reliably, '
+    description: 'Search earlier sessions by title, exact terms, or multilingual meaning (local index). '
       + 'filters by time range (default: last 30 days), and returns each matching session with dated snippets. '
       + 'Defaults to sessions in the current working directory and excludes the current session.',
     parameters: TOOL_PARAMETERS,
@@ -271,6 +325,7 @@ export function apply(ctx, rawConfig) {
               value: {
                 ...store.stats(),
                 indexing: indexer.state,
+                semantic: semantic.status,
                 path: config.path,
                 indexToolOutput: config.tools,
                 defaultDays: config.defaultDays,

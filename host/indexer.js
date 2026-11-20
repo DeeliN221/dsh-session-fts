@@ -23,11 +23,14 @@ export class Indexer {
     this.state = { phase: 'idle', done: 0, total: 0, lastRun: null, lastError: null }
     this.pending = new Map()
     this.disposed = false
+    this.onCommit = () => {}
   }
 
   _enqueue(task) {
     const run = this.tail.then(() => (this.disposed ? undefined : task()))
-    this.tail = run.catch(() => {})
+    this.tail = run.catch((error) => {
+      this.state.lastError = String(error)
+    })
     return run
   }
 
@@ -69,21 +72,18 @@ export class Indexer {
     await this.tail
   }
 
-  dispose() {
+  async dispose() {
     this.disposed = true
     for (const timer of this.pending.values()) clearTimeout(timer)
     this.pending.clear()
+    await this.tail
   }
 
   async _persistenceSnapshots() {
     const persistence = this.ctx.get('sessionPersistence')
     const map = new Map()
     if (persistence === undefined) return map
-    try {
-      for (const snapshot of await persistence.list()) map.set(snapshot.header.id, snapshot)
-    } catch (error) {
-      this.ctx.logger?.warn?.(`session-fts: persistence listing failed: ${String(error)}`)
-    }
+    for (const snapshot of await persistence.list()) map.set(snapshot.header.id, snapshot)
     return map
   }
 
@@ -95,12 +95,14 @@ export class Indexer {
       const snapshots = await this._persistenceSnapshots()
       this.state.total = records.length
       const seen = new Set()
+      const failures = []
       for (const record of records) {
         if (this.disposed) return
         seen.add(record.header.id)
         try {
           await this._reconcileOne(record.header.id, snapshots.get(record.header.id))
         } catch (error) {
+          failures.push(error)
           this.ctx.logger?.warn?.(`session-fts: index of ${record.header.id} failed: ${String(error)}`)
         }
         this.state.done++
@@ -109,6 +111,8 @@ export class Indexer {
       for (const id of this.store.sessionIds()) {
         if (!seen.has(id)) this.store.deleteSession(id)
       }
+      this.onCommit()
+      if (failures.length) throw new AggregateError(failures, `${failures.length} sessions failed to index; retry scan`)
       this.state = { ...this.state, phase: 'idle', lastRun: { at: started, ms: Date.now() - started } }
     } catch (error) {
       this.state = { ...this.state, phase: 'idle', lastError: String(error) }
@@ -175,12 +179,13 @@ export class Indexer {
       id: sessionId,
       cwd: header.cwd ?? null,
       parent: header.parentSession ?? null,
-      origin: header.origin ?? null,
+      origin: header.delegationDepth > 0 || header.parentSession !== undefined ? 'subagent' : (header.origin ?? null),
       title,
       created_at: header.createdAt,
       updated_at: lastTime,
       stamp,
       indexed_seq: lastSeq,
     }, docs)
+    this.onCommit()
   }
 }

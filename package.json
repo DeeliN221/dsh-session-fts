@@ -1,16 +1,16 @@
 {
   "name": "dsh-session-fts",
-  "version": "0.1.0",
-  "description": "Local full-text session search with CJK-aware matching and time-range filters",
+  "version": "0.2.0-zzl.1",
+  "description": "Local layered title, CJK full-text and multilingual semantic session search",
   "license": "MIT",
   "author": "xuhuaiqu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xuhuaiqu/dsh-session-fts.git"
+    "url": "git+https://github.com/DeeliN221/dsh-session-fts.git"
   },
-  "homepage": "https://github.com/xuhuaiqu/dsh-session-fts#readme",
+  "homepage": "https://github.com/DeeliN221/dsh-session-fts#readme",
   "bugs": {
-    "url": "https://github.com/xuhuaiqu/dsh-session-fts/issues"
+    "url": "https://github.com/DeeliN221/dsh-session-fts/issues"
   },
   "keywords": [
     "deepseek-harness",
@@ -58,5 +58,19 @@
         "0.2.2-rc.5": "compatible"
       }
     }
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2",
+    "sqlite-vec": "0.1.9"
+  },
+  "engines": {
+    "node": ">=24.9",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check index.js && node --check client.js && node --check host/semantic-worker.js",
+    "bench": "node --expose-gc tests/search.perf.mjs",
+    "test:semantic": "node tests/semantic-smoke.js"
   }
 }

@@ -1,6 +1,8 @@
 # dsh-session-fts
 
-DeepSeek Harness（DSH）的本地会话全文搜索插件：中文按字面子串命中，支持时间范围筛选，同时提供搜索页面和智能体工具。
+DeepSeek Harness（DSH）的本地分层会话搜索插件：标题、中文全文和多语言语义搜索，共用时间范围与工作区筛选。
+
+本仓库基于 [xuhuaiqu/dsh-session-fts](https://github.com/xuhuaiqu/dsh-session-fts) 的 MIT 版本维护扩展，保留上游署名与许可证。安装本 fork 的版本化发布物，见 [分层搜索说明](docs/LAYERED-SEARCH.md)；上游安装命令只安装原版全文功能。
 
 Local full-text search over earlier DeepSeek Harness sessions, with reliable Chinese matching, time-range filters, a sidebar search page, and an agent tool. [English summary](#english).
 
@@ -22,7 +24,8 @@ DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器�
 
 ## 功能
 
-- **纯本地。** 索引是一个 SQLite 文件，默认在 `~/.dsh/session-fts.sqlite`。没有远程数据库，也没有任何网络请求。索引只从会话日志派生，删掉文件后插件会自动重建，插件不会写会话日志。
+- **本地检索。** 全文索引默认在 `~/.dsh/session-fts.sqlite`，语义向量在相邻的 `.semantic.sqlite` 文件。模型首次使用时下载到本地缓存，推理及检索在本机执行，不上传会话原文。索引只从会话日志派生，插件不会写会话日志。
+- **分层搜索。** 标题只查询会话元数据；全文使用中文逐字 FTS5 索引；语义使用 multilingual-e5-small 量化模型和 sqlite-vec。语义尚未就绪或失败时，标题与全文仍可使用。
 - **中文可用。** 入库前给每个中日韩字符两边加空格，让它成为单独的词元；查询编译成连续字符的短语，所以命中结果和字面子串一致。英文按单词匹配，结尾是字母或数字时也匹配前缀（`sqlite` 能找到 `sqlite3`）。
 - **时间范围。** 今天、近 7 / 30 / 90 天、全部、自定义起止日期，默认近 30 天。
 - **筛选和排序。** 工作区、发言方（我 / 助手 / 工具输出）、是否包含子代理会话；可按相关度（bm25）或时间排序。
