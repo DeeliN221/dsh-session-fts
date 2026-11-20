@@ -21,9 +21,9 @@ Open it from **Session search** in the left sidebar. Selecting a result opens th
 | `maxDocChars` | `20000` | Characters indexed per message |
 | `includeSubagents` | `false` | Include subagent sessions by default |
 
-Changing `indexToolOutput` or `maxDocChars` rebuilds the index.
+Changing extraction options requires a separate index path; incompatible options never erase a shared index. See [layered search](LAYERED-SEARCH.md).
 
 ## Limitations
 
-- A result opens the session, not the exact message.
+- A title opens its session; each snippet locates its exact event with bounded history loading and explicit failure feedback. SQLite runs in a worker; same-host processes can share a local index for the same complete corpus. See [the detailed behavior](LAYERED-SEARCH.md).
 - User messages are indexed only when a person wrote them; injected context (skill catalogs, runtime context) is skipped. Reasoning is never indexed.

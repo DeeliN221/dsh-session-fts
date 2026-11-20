@@ -1,6 +1,6 @@
 # 技术方案
 
-本文说明 dsh-session-fts 的设计和实现，内容已对照 v0.1.0 源码核对。适用版本：DeepSeek Harness 0.2.2-rc.5。
+本文保留社区上游 v0.1.0 的设计基线，适用宿主为 DeepSeek Harness 0.2.2-rc.5；其中非目标和已知限制仅描述上游版本。本维护 fork 的现行行为以[分层搜索说明](LAYERED-SEARCH.md)和[本轮验收](VALIDATION-0.3.md)为准。
 
 ## 1. 背景
 
