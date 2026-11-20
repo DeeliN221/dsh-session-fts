@@ -4,7 +4,7 @@
 
 ## 使用
 
-安装本仓库 Release 的固定 tgz：`dsh plugin --profile web add /absolute/path/dsh-session-fts-0.3.1-zzl.1.tgz`。启用 bundle 后打开侧栏“会话搜索”，选择标题、全文或语义；已有的工作区、日期、角色、子代理与排序筛选继续生效。插件新增独立入口，原有侧栏标题搜索保持原样。更新后刷新页面；宿主未动态装载新 bundle 时需重启。
+安装本仓库 Release 的固定 tgz：`dsh plugin --profile web add /absolute/path/dsh-session-fts-0.3.2-zzl.1.tgz`。启用 bundle 后打开侧栏“会话搜索”，选择标题、全文或语义；已有的工作区、日期、角色、子代理与排序筛选继续生效。插件新增独立入口，原有侧栏标题搜索保持原样。更新后刷新页面；宿主未动态装载新 bundle 时需重启。
 
 语义首次使用下载 `Xenova/multilingual-e5-small` 的 q8 模型，网络只用于模型文件，不发送会话原文。模型失败会显示错误，标题与全文仍可用。受限网络可先在能联网的环境预加载模型缓存，或把 `semantic.model` 指向本地 Transformers.js 模型目录。Node 不自动使用 macOS 系统代理；下载时需要显式设置 `HTTPS_PROXY` 与 `NODE_USE_ENV_PROXY=1`，或者预置缓存，不会静默更换下载源。
 
