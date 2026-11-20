@@ -4,7 +4,7 @@
 
 ## 使用
 
-安装本仓库 Release 的固定 tgz：`dsh plugin --profile web add /absolute/path/dsh-session-fts-0.3.0-zzl.1.tgz`。启用 bundle 后打开侧栏“会话搜索”，选择标题、全文或语义；已有的工作区、日期、角色、子代理与排序筛选继续生效。插件新增独立入口，原有侧栏标题搜索保持原样。更新后刷新页面；宿主未动态装载新 bundle 时需重启。
+安装本仓库 Release 的固定 tgz：`dsh plugin --profile web add /absolute/path/dsh-session-fts-0.3.1-zzl.1.tgz`。启用 bundle 后打开侧栏“会话搜索”，选择标题、全文或语义；已有的工作区、日期、角色、子代理与排序筛选继续生效。插件新增独立入口，原有侧栏标题搜索保持原样。更新后刷新页面；宿主未动态装载新 bundle 时需重启。
 
 语义首次使用下载 `Xenova/multilingual-e5-small` 的 q8 模型，网络只用于模型文件，不发送会话原文。模型失败会显示错误，标题与全文仍可用。受限网络可先在能联网的环境预加载模型缓存，或把 `semantic.model` 指向本地 Transformers.js 模型目录。Node 不自动使用 macOS 系统代理；下载时需要显式设置 `HTTPS_PROXY` 与 `NODE_USE_ENV_PROXY=1`，或者预置缓存，不会静默更换下载源。
 
@@ -55,7 +55,7 @@ SQLite 打开、读写、查询、状态统计和关闭全部在独立词法 wor
 
 ## 精确命中定位
 
-标题行只打开会话；每条命中片段是独立可点击项，通过持久事件 seq 找到对应消息。加载旧历史最多 40 页、20 秒，切换会话、再次点击或用户滚动会取消旧定位。消息已删、分页停滞、超出预算和非聊天视图有明确反馈，不会跳到相邻消息冒充成功。当前 DSH 没有公开消息 reveal 方法，因此通过公开 Session 引用和 Chat 投影解析身份后，仅在最后一步定位精确 data-chat-node-key 元素，未使用全文 DOM 扫描。
+标题行只打开会话；每条命中片段是独立可点击项，通过持久事件 seq 找到对应消息。加载旧历史最多 40 页、120 秒，切换会话、再次点击或用户滚动会取消旧定位。消息已删、分页停滞、超出预算和非聊天视图有明确反馈，不会跳到相邻消息冒充成功。当前 DSH 没有公开消息 reveal 方法，因此通过公开 Session 引用和 Chat 投影解析身份后，仅在最后一步定位精确 data-chat-node-key 元素，未使用全文 DOM 扫描。
 
 ## NAS 与 worker
 
