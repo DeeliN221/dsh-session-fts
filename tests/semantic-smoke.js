@@ -15,7 +15,7 @@ db.exec(`PRAGMA journal_mode=WAL;
   INSERT INTO sessions VALUES('apple','/smoke','Fruit',1,2,NULL),('network','/smoke','Network',1,2,NULL);
   INSERT INTO events VALUES(1,'apple',1,'user',2,'I enjoy eating fresh apples and other fruit.'),
     (2,'network',1,'user',2,'Configure the firewall and troubleshoot TCP connections.');`)
-const search = new SemanticSearch({ path, semantic: { enabled:true,model:'Xenova/multilingual-e5-small',
+const search = new SemanticSearch({ path, semantic: { enabled:true,model:process.env.SEMANTIC_MODEL ?? 'Xenova/multilingual-e5-small',
   cacheDir: process.env.SEMANTIC_MODEL_CACHE ?? join(tmpdir(),'dsh-semantic-models'),batchSize:2,
   chunkChars:1000,queryCacheSize:8,minScore:0,maxCandidates:10 } })
 const timeout = setTimeout(()=> { void search.close() },120_000)
