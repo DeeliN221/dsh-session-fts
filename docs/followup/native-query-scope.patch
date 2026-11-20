@@ -1,0 +1,65 @@
+--- a/packages/session-query-sqlite/lib/index.js
++++ b/packages/session-query-sqlite/lib/index.js
+@@ -2,7 +2,7 @@
+ import { SESSION_FORMAT_VERSION, SessionSeq } from "@deepseek-ai/dsh-session";
+ import { Service } from "@deepseek-ai/cordis";
+ import z from "@deepseek-ai/schemastery";
+-import SessionQueryEngine, { SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY, SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE, SESSION_QUERY_READ_WINDOW_MAX, SessionQueryError, SessionSearchCursor, assertSessionHeadersCompatible, buildSessionEventSearchDocuments, materializeSessionEventResultFilters, materializeSessionResultFilters, readColdSessionLog } from "@deepseek-ai/dsh-session-query";
++import SessionQueryEngine, { SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY, SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE, SESSION_QUERY_READ_WINDOW_MAX, SessionQueryError, SessionSearchCursor, assertSessionHeadersCompatible, buildSessionEventSearchDocuments, filterSessionResults, materializeSessionEventResultFilters, materializeSessionResultFilters, readColdSessionLog } from "@deepseek-ai/dsh-session-query";
+ import { mkdir, open } from "node:fs/promises";
+ import { dirname, resolve } from "node:path";
+ //#region lib/types/schema.js
+@@ -540,7 +540,7 @@
+ 		const signal = exec?.signal;
+ 		return this._serialized(signal, async () => {
+ 			await this._ensureReady(signal);
+-			const persistenceBinding = await this._reconcile(signal);
++			const persistenceBinding = await this._reconcile(signal, normalized.sessionFilters);
+ 			assertNotAborted(signal);
+ 			const generation = String(this._globalGeneration);
+ 			const fingerprint = requestFingerprint(normalized);
+@@ -561,7 +561,7 @@
+ 		const signal = exec?.signal;
+ 		return this._serialized(signal, async () => {
+ 			await this._ensureReady(signal);
+-			const persistenceBinding = await this._reconcile(signal);
++			const persistenceBinding = await this._reconcile(signal, [{ kind: "id", values: [normalized.sessionId] }]);
+ 			assertNotAborted(signal);
+ 			const target = this._targetObservation(normalized.sessionId, persistenceBinding);
+ 			const fingerprint = requestFingerprint(normalized);
+@@ -643,14 +643,14 @@
+ 			release();
+ 		}
+ 	}
+-	async _reconcile(signal) {
++	async _reconcile(signal, filters = []) {
+ 		assertNotAborted(signal);
+ 		const db = this._requireDb();
+ 		const persistedRows = db.prepare("SELECT id, revision, generation FROM persisted_sessions").all();
+ 		const liveRows = db.prepare("SELECT id, fingerprint, persisted, generation FROM temp.live_sessions").all();
+ 		const persistedById = new Map(persistedRows.map((row) => [row.id, row]));
+ 		const liveById = new Map(liveRows.map((row) => [row.id, row]));
+-		const observation = await this._observeStable(persistedById, signal);
++		const observation = await this._observeStable(persistedById, signal, filters);
+ 		assertNotAborted(signal);
+ 		const persistentChanges = observation.persistenceBinding.service === void 0 ? [] : [...observation.persisted.values()].filter((entry) => entry.loaded !== void 0);
+ 		const persistentDeletes = observation.persistenceBinding.service === void 0 ? [] : persistedRows.filter((row) => !observation.persisted.has(row.id));
+@@ -704,7 +704,7 @@
+ 		this._lastPersistenceIdentity = observation.persistenceBinding.identity;
+ 		return observation.persistenceBinding;
+ 	}
+-	async _observeStable(indexed, signal) {
++	async _observeStable(indexed, signal, filters = []) {
+ 		for (let attempt = 0; attempt < STABLE_OBSERVATION_ATTEMPTS; attempt += 1) {
+ 			assertNotAborted(signal);
+ 			const persistenceBinding = this._persistenceBinding;
+@@ -718,6 +718,9 @@
+ 				assertNotAborted(signal);
+ 				persisted = materializePersistenceSnapshots(before);
+ 				for (const entry of persisted.values()) {
++					// Read only candidates admitted by the same metadata predicates as the query.
++					// Keep every snapshot in the observation: unrelated indexed rows are not deleted.
++					if (!filterSessionResults([{header: entry.header, live: initiallyLive.has(entry.header.id), persisted: true}], filters).length) continue;
+ 					if (canReuseIndexed && indexed.get(entry.header.id)?.revision === entry.revision) continue;
+ 					if (initiallyLive.has(entry.header.id) || this.ctx.sessions.get(entry.header.id) !== void 0) continue;
+ 					assertNotAborted(signal);
