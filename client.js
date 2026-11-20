@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
         navigationView: '无法显示目标消息，请切换到聊天视图后重试。', navigationTimeout: '定位超时，请重试。', navigationFailed: '无法打开目标消息，请检查连接后重试。',
         open: '打开会话', mode: '搜索方式', titleMode: '标题', fulltextMode: '全文', semanticMode: '语义',
         searching: '正在搜索…', semanticDisabled: '语义搜索未启用；请先配置嵌入模型。',
+        semanticWaiting: '等待其他进程完成索引，已提交内容仍可查询',
         semanticLoading: '正在加载语义搜索…', semanticIndexing: '正在建立语义索引 {indexed}/{total}',
         semanticReady: '语义搜索就绪 · {indexed}/{total}', semanticError: '语义搜索出错：{msg}',
       },
@@ -42,6 +43,7 @@ window.__ModuleLoader__.load({
         navigationView: 'Cannot display this message. Switch to the Chat view and retry.', navigationTimeout: 'Message navigation timed out. Retry.', navigationFailed: 'Cannot open this message. Check the connection and retry.',
         open: 'Open session', mode: 'Search mode', titleMode: 'Title', fulltextMode: 'Full text', semanticMode: 'Semantic',
         searching: 'Searching…', semanticDisabled: 'Semantic search is disabled; configure an embedding model to enable it.',
+        semanticWaiting: 'Waiting for another process to finish indexing. Committed content is still searchable.',
         semanticLoading: 'Loading semantic search…', semanticIndexing: 'Indexing semantic search {indexed}/{total}',
         semanticReady: 'Semantic search ready · {indexed}/{total}', semanticError: 'Semantic search error: {msg}',
       },
@@ -169,6 +171,45 @@ window.__ModuleLoader__.load({
         Promise.resolve(promise).then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
       })
       const frame = signal => wait(new Promise(resolve => requestAnimationFrame(resolve)), signal)
+      const waitForPager = (session, signal) => new Promise((resolve, reject) => {
+        let stop = () => {}, settled = false
+        const finish = error => {
+          if (settled) return
+          settled = true
+          stop()
+          signal.removeEventListener('abort', aborted)
+          if (error) reject(error)
+          else resolve()
+        }
+        const aborted = () => finish(signal.reason)
+        const check = () => {
+          if (signal.aborted) aborted()
+          else if (!session.getSnapshot().loadingOlder) finish()
+        }
+        signal.addEventListener('abort', aborted, { once: true })
+        stop = session.subscribe(check)
+        if (settled) stop()
+        check()
+      })
+      const stableSeat = async (seat, signal) => {
+        let previous, stable = 0
+        for (let attempt = 0; attempt < 90; attempt++) {
+          await frame(signal)
+          signal.throwIfAborted()
+          if (!seat.isConnected) throw failure('navigationView')
+          let blocked = false
+          for (let ancestor = seat; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.hasAttribute('hidden') || ['reveal', 'collapse'].includes(ancestor.dataset?.chatMotion)) blocked = true
+          }
+          const rect = seat.getBoundingClientRect()
+          const geometry = [rect.x, rect.y, rect.width, rect.height]
+          const visible = !blocked && rect.width > 0 && rect.height > 0 && seat.getClientRects().length > 0
+          stable = visible && previous?.every((value, index) => Math.abs(value - geometry[index]) < 0.5) ? stable + 1 : 0
+          previous = visible ? geometry : undefined
+          if (stable >= 3) return
+        }
+        throw failure('navigationView')
+      }
       const open = async (sessionId, seq) => {
         cancel()
         const controller = new AbortController()
@@ -198,7 +239,7 @@ window.__ModuleLoader__.load({
           let event
           // loadOlder has a bounded page size. Never use the unbounded shared
           // loadThrough loop: a superseded search must not keep paging a cold log.
-          for (let page = 0; ; page++) {
+          for (let page = 0; ; ) {
             signal.throwIfAborted()
             const entries = binding.eventSource.getSnapshot().entries
             event = entries.find(entry => entry.event.seq === seq)?.event
@@ -206,8 +247,14 @@ window.__ModuleLoader__.load({
             if (session.getSnapshot().openState !== 'open') throw failure('navigationMissing')
             const head = entries[0]?.event.seq
             if (!session.getSnapshot().hasMore || (head !== undefined && head <= seq)) throw failure('navigationMissing')
+            if (session.getSnapshot().loadingOlder) {
+              await waitForPager(session, signal)
+              continue
+            }
             if (page >= 40) throw failure('navigationLimit')
+            page++
             await wait(session.loadOlder(), signal)
+            await waitForPager(session, signal)
             signal.throwIfAborted()
             const nextHead = binding.eventSource.getSnapshot().entries[0]?.event.seq
             if (nextHead === head) throw failure('navigationStalled')
@@ -242,14 +289,18 @@ window.__ModuleLoader__.load({
           for (let ancestor = seat; ancestor; ancestor = ancestor.parentElement) {
             if (ancestor.hasAttribute('hidden')) ancestor.dispatchEvent(new Event('beforematch'))
           }
-          await frame(signal)
-          await frame(signal)
-          signal.throwIfAborted()
-          if (!seat.isConnected || seat.getClientRects().length === 0) throw failure('navigationView')
+          await stableSeat(seat, signal)
           seat.scrollIntoView({ block: 'center', behavior: 'instant' })
           seat.setAttribute('tabindex', '-1')
           seat.focus({ preventScroll: true })
           seat.addEventListener('blur', () => seat.removeAttribute('tabindex'), { once: true })
+          // Opening Chat and fold owners may still reconcile their viewport.
+          // Declare success only once the landing itself has stopped moving.
+          await stableSeat(seat, signal)
+          const viewport = seat.closest('[data-conversation-scroll]') || seat.closest('[data-chat-following-tail]')
+          const target = seat.getBoundingClientRect()
+          const bounds = viewport?.getBoundingClientRect()
+          if (bounds && (target.bottom <= bounds.top || target.top >= bounds.bottom)) throw failure('navigationView')
           publish({ phase: 'done', seq })
         } catch (error) {
           if (current !== controller) return
@@ -365,6 +416,7 @@ window.__ModuleLoader__.load({
         const indexing = status?.indexing?.phase === 'indexing'
         const semantic = status?.semantic
         const semanticText = semantic?.phase === 'disabled' ? t('semanticDisabled')
+          : semantic?.phase === 'waiting' ? t('semanticWaiting')
           : semantic?.phase === 'error' ? fmt(t('semanticError'), { msg: semantic.error || t('semanticMode') })
           : semantic?.phase === 'ready' || semantic?.phase === 'indexing'
             ? fmt(t(semantic.phase === 'ready' ? 'semanticReady' : 'semanticIndexing'), { indexed: semantic.indexed, total: semantic.total })

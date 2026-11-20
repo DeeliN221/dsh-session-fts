@@ -5,16 +5,23 @@ import vm from 'node:vm'
 
 // Exercise the production adapter without exporting a test-only browser API.
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-function fixture({ pages = [], nodes = [], ready, hasMore = true } = {}) {
-  let create, entries = [{ event: { seq: 100 } }], nav = new AbortController(), released = 0, calls = 0, scrolls = 0, opened = []
-  const events = new Map(), frames = [], notices = []
-  const seat = { isConnected: true, parentElement: null, hasAttribute: () => false, getClientRects: () => [1], scrollIntoView: () => scrolls++, setAttribute() {}, focus() {}, addEventListener() {} }
+function fixture({ pages = [], nodes = [], ready, hasMore = true, loadingOlder = false, measure, ancestor, afterScroll } = {}) {
+  let create, entries = [{ event: { seq: 100 } }], nav = new AbortController(), released = 0, calls = 0, scrolls = 0, opened = [], frameCount = 0
+  const events = new Map(), frames = [], notices = [], subscribers = new Set()
+  const seat = { isConnected: true, parentElement: ancestor || null, dataset: {}, hasAttribute: () => false,
+    getClientRects: () => [1], getBoundingClientRect: () => measure?.(frameCount) || { x: 0, y: 100, width: 300, height: 80, top: 100, bottom: 180 },
+    closest: () => ({ getBoundingClientRect: () => ({ top: 0, bottom: 600 }) }),
+    scrollIntoView: () => { scrolls++; afterScroll?.() }, setAttribute() {}, focus() {}, addEventListener() {} }
   const projection = { subscribe: () => () => {}, getSnapshot: () => ({ nodes: { values: () => nodes } }) }
-  const session = { getSnapshot: () => ({ openState: 'open', hasMore }), loadOlder: async () => {
+  const session = { subscribe: fn => { subscribers.add(fn); return () => subscribers.delete(fn) },
+    getSnapshot: () => ({ openState: 'open', hasMore, loadingOlder }), loadOlder: async () => {
+    loadingOlder = true
     const page = pages[calls++]
     if (page instanceof Promise) entries = await page
     else if (page) entries = page
     else hasMore = false
+    loadingOlder = false
+    subscribers.forEach(fn => fn())
   } }
   const binding = { session, eventSource: { getSnapshot: () => ({ entries }) } }
   const services = {
@@ -37,8 +44,10 @@ function fixture({ pages = [], nodes = [], ready, hasMore = true } = {}) {
   })
   const navigation = create(context)
   navigation.subscribe(() => notices.push(navigation.getSnapshot()))
-  const flush = async () => { for (let i = 0; i < 15; i++) { await Promise.resolve(); frames.splice(0).forEach(fn => fn()) } }
-  return { navigation, flush, notices, opened, services, binding, get calls() { return calls }, get scrolls() { return scrolls }, get released() { return released }, interrupt(type = 'wheel') { events.get(type)?.forEach(fn => fn()) }, changeSession() { services.uiWorkspace.openSession('elsewhere') } }
+  const flush = async (count = 40) => { for (let i = 0; i < count; i++) { await Promise.resolve(); frameCount++; frames.splice(0).forEach(fn => fn()) } }
+  return { navigation, flush, notices, opened, services, binding, seat, subscribers,
+    settleSharedPage(page) { entries = page; loadingOlder = false; subscribers.forEach(fn => fn()) },
+    get calls() { return calls }, get scrolls() { return scrolls }, get released() { return released }, interrupt(type = 'wheel') { events.get(type)?.forEach(fn => fn()) }, changeSession() { services.uiWorkspace.openSession('elsewhere') } }
 }
 const event = seq => ({ event: { type: 'user/message', seq } })
 const node = (seq, kind = 'user') => ({ key: `message-${seq}`, kind, data: { seq } })
@@ -96,6 +105,42 @@ test('unavailable public seam gives explicit feedback without DOM fallback', asy
   const f = fixture(); delete f.services.uiConversation
   await f.navigation.open('unsupported', 1)
   assert.equal(f.navigation.getSnapshot().code, 'navigationUnsupported'); assert.equal(f.scrolls, 0)
+})
+test('shared pager settles through subscription without duplicate paging or false stall', async () => {
+  const f = fixture({ loadingOlder: true, nodes: [node(10)] })
+  const done = f.navigation.open('shared', 10); await f.flush()
+  assert.equal(f.calls, 0); assert.equal(f.subscribers.size, 1); assert.equal(f.scrolls, 0)
+  f.settleSharedPage([event(10)]); await f.flush(); await done
+  assert.equal(f.calls, 0); assert.equal(f.scrolls, 1); assert.equal(f.subscribers.size, 0)
+})
+test('cancelling a shared pager wait immediately removes subscription', async () => {
+  const f = fixture({ loadingOlder: true, nodes: [node(10)] })
+  const done = f.navigation.open('shared', 10); await f.flush(); f.navigation.cancel(); await f.flush(); await done
+  assert.equal(f.subscribers.size, 0); assert.equal(f.released, 1)
+  f.settleSharedPage([event(10)]); await f.flush(); assert.equal(f.scrolls, 0)
+})
+test('fold must reveal and settle geometry before scrolling or declaring success', async () => {
+  let hidden = true, moving = true
+  const ancestor = { parentElement: null, dataset: { chatMotion: 'reveal' }, hasAttribute: () => hidden, dispatchEvent: () => {} }
+  const f = fixture({ nodes: [node(100)], ancestor, measure: frame => ({ x: 0, y: moving ? frame * 5 : 100, width: 300, height: 80, top: 100, bottom: 180 }) })
+  const done = f.navigation.open('fold', 100); await f.flush()
+  assert.equal(f.scrolls, 0); assert.equal(f.navigation.getSnapshot().phase, 'loading')
+  hidden = false; await f.flush(10); assert.equal(f.scrolls, 0)
+  moving = false; delete ancestor.dataset.chatMotion; await f.flush(); await done
+  assert.equal(f.scrolls, 1); assert.equal(f.navigation.getSnapshot().phase, 'done')
+})
+test('permanently hidden seat fails instead of reporting a successful landing', async () => {
+  const ancestor = { parentElement: null, dataset: {}, hasAttribute: () => true, dispatchEvent: () => {} }
+  const f = fixture({ nodes: [node(100)], ancestor })
+  const done = f.navigation.open('hidden', 100); await f.flush(400); await done
+  assert.equal(f.scrolls, 0); assert.equal(f.navigation.getSnapshot().code, 'navigationView')
+})
+test('viewport reconciliation moving target offscreen cannot report success', async () => {
+  let landed = false
+  const f = fixture({ nodes: [node(100)], afterScroll: () => landed = true,
+    measure: () => ({ x: 0, y: landed ? -500 : 100, width: 300, height: 80, top: landed ? -500 : 100, bottom: landed ? -420 : 180 }) })
+  const done = f.navigation.open('moved', 100); await f.flush(); await done
+  assert.equal(f.scrolls, 1); assert.equal(f.navigation.getSnapshot().code, 'navigationView')
 })
 test('stalled history and bounded paging report failures', async () => {
   const stalled = fixture({ pages: [[event(100)]] })

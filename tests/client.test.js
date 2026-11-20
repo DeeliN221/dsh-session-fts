@@ -50,5 +50,6 @@ test('localized semantic states, disabled configuration tooltip, polling abort a
   const app=harness('zh');const initial=app.requests[0];app.poll();assert.equal(initial.options.signal.aborted,true);initial.resolve(status('ready'));await app.flush();app.requests.at(-1).resolve(status('disabled'));await app.flush()
   assert.equal(app.button('语义').props.disabled,true);assert.ok(app.nodes().some(n=>n.props.title?.includes('配置嵌入模型')))
   for(const phase of ['loading','indexing','ready','error']) {app.poll();app.requests.at(-1).resolve({...status(phase),semantic:{...status(phase).semantic,error:'unavailable'}});await app.flush();assert.equal(app.button('语义').props.disabled,false);assert.ok(app.nodes().some(n=>n.props.role==='status' && app.text(n).includes(phase==='error'?'unavailable':phase==='loading'?'加载': '2/4')))}
+  app.poll(); app.requests.at(-1).resolve(status('waiting')); await app.flush(); assert.ok(app.nodes().some(n=>n.props.role==='status' && app.text(n).includes('等待其他进程')))
   app.poll(); const pending=app.requests.at(-1);app.unmount();assert.equal(pending.options.signal.aborted,true);assert.equal(app.intervals.size,0);pending.resolve(status('disabled'));await app.flush()
 })
