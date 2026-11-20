@@ -7,7 +7,13 @@ import vm from 'node:vm'
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 function fixture({ pages = [], nodes = [], ready, hasMore = true, loadingOlder = false, measure, ancestor, afterScroll } = {}) {
   let create, entries = [{ event: { seq: 100 } }], nav = new AbortController(), released = 0, calls = 0, scrolls = 0, opened = [], frameCount = 0
-  const events = new Map(), frames = [], notices = [], subscribers = new Set()
+  const events = new Map(), frames = [], notices = [], subscribers = new Set(), deadlines = []
+  let clock = 0
+  const signals = { any: values => AbortSignal.any(values), timeout: ms => {
+    const controller = new AbortController()
+    deadlines.push({ at: clock + ms, controller })
+    return controller.signal
+  } }
   const seat = { isConnected: true, parentElement: ancestor || null, dataset: {}, hasAttribute: () => false,
     getClientRects: () => [1], getBoundingClientRect: () => measure?.(frameCount) || { x: 0, y: 100, width: 300, height: 80, top: 100, bottom: 180 },
     closest: () => ({ getBoundingClientRect: () => ({ top: 0, bottom: 600 }) }),
@@ -39,13 +45,14 @@ function fixture({ pages = [], nodes = [], ready, hasMore = true, loadingOlder =
   vm.runInNewContext(source.replace('    function makePage(', '    globalThis.capture(makeNavigation)\n    function makePage('), {
     capture: value => create = value,
     window: { __ModuleLoader__: { load(spec) { spec.factory(() => ({})) } } },
-    AbortController, AbortSignal, Event, document, CSS: { escape: value => value },
+    AbortController, AbortSignal: signals, Event, document, CSS: { escape: value => value },
     requestAnimationFrame: fn => frames.push(fn),
   })
   const navigation = create(context)
   navigation.subscribe(() => notices.push(navigation.getSnapshot()))
   const flush = async (count = 40) => { for (let i = 0; i < count; i++) { await Promise.resolve(); frameCount++; frames.splice(0).forEach(fn => fn()) } }
   return { navigation, flush, notices, opened, services, binding, seat, subscribers,
+    advance(ms) { clock += ms; deadlines.filter(d => d.at <= clock).forEach(d => d.controller.abort(new DOMException('Timed out', 'TimeoutError'))) },
     settleSharedPage(page) { entries = page; loadingOlder = false; subscribers.forEach(fn => fn()) },
     get calls() { return calls }, get scrolls() { return scrolls }, get released() { return released }, interrupt(type = 'wheel') { events.get(type)?.forEach(fn => fn()) }, changeSession() { services.uiWorkspace.openSession('elsewhere') } }
 }
@@ -141,6 +148,30 @@ test('viewport reconciliation moving target offscreen cannot report success', as
     measure: () => ({ x: 0, y: landed ? -500 : 100, width: 300, height: 80, top: landed ? -500 : 100, bottom: landed ? -420 : 180 }) })
   const done = f.navigation.open('moved', 100); await f.flush(); await done
   assert.equal(f.scrolls, 1); assert.equal(f.navigation.getSnapshot().code, 'navigationView')
+})
+test('cold opening and paging can cross old twenty-second deadline with progress', async () => {
+  let openReady, pageReady
+  const f = fixture({ ready: new Promise(resolve => openReady = resolve),
+    pages: [new Promise(resolve => pageReady = resolve)], nodes: [node(10)] })
+  const done = f.navigation.open('slow-cold', 10)
+  f.advance(25000); await f.flush()
+  assert.equal(f.navigation.getSnapshot().phase, 'loading'); assert.equal(f.released, 0)
+  openReady(f.binding); await f.flush(); assert.equal(f.calls, 1)
+  f.advance(35000); await f.flush(); assert.equal(f.released, 0)
+  pageReady([event(10)]); await f.flush(); await done
+  assert.equal(f.navigation.getSnapshot().phase, 'done'); assert.equal(f.scrolls, 1)
+  assert.ok(f.notices.some(state => state.phase === 'loading' && state.pages === 1))
+})
+test('total two-minute deadline bounds both initial opening and a pending cold page', async () => {
+  for (const stage of ['open', 'page']) {
+    const pending = new Promise(() => {})
+    const f = fixture(stage === 'open' ? { ready: pending } : { pages: [pending] })
+    const done = f.navigation.open('deadline', 10); await f.flush()
+    f.advance(119999); await f.flush()
+    assert.equal(f.navigation.getSnapshot().phase, 'loading'); assert.equal(f.released, 0)
+    f.advance(1); await f.flush(); await done
+    assert.equal(f.navigation.getSnapshot().code, 'navigationTimeout'); assert.equal(f.released, 1); assert.equal(f.scrolls, 0)
+  }
 })
 test('stalled history and bounded paging report failures', async () => {
   const stalled = fixture({ pages: [[event(100)]] })

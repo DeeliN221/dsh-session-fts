@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
         none: '没有找到匹配内容。可以减少关键词或放宽时间范围。', more: '加载更多', untitled: '未命名会话',
         hits: '{n} 处', indexed: '已索引 {sessions} 个会话 · {docs} 条消息', indexing: '正在索引 {done}/{total}',
         reindex: '重新扫描', rebuild: '重建索引', error: '搜索失败：{msg}', hint: '输入关键词开始搜索。索引只保存在本机。',
-        locating: '正在加载并定位消息…', located: '已定位消息 #{seq}',
+        locating: '正在加载并定位消息… 已加载 {pages} 页历史', located: '已定位消息 #{seq}',
         navigationUnsupported: '当前 DSH 无法精确定位这条消息。', navigationMissing: '消息不存在或已删除，请重新扫描索引。',
         navigationLimit: '历史过长，已停止自动加载。请在会话中加载更早消息后重试。', navigationStalled: '历史加载未能前进，请检查连接后重试。',
         navigationView: '无法显示目标消息，请切换到聊天视图后重试。', navigationTimeout: '定位超时，请重试。', navigationFailed: '无法打开目标消息，请检查连接后重试。',
@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
         none: 'No matches. Try fewer terms or a wider time range.', more: 'Load more', untitled: 'Untitled session',
         hits: '{n} hits', indexed: 'Indexed {sessions} sessions · {docs} messages', indexing: 'Indexing {done}/{total}',
         reindex: 'Rescan', rebuild: 'Rebuild index', error: 'Search failed: {msg}', hint: 'Type to search. The index stays on this machine.',
-        locating: 'Loading and locating message…', located: 'Located message #{seq}',
+        locating: 'Loading and locating message… {pages} history pages loaded', located: 'Located message #{seq}',
         navigationUnsupported: 'This DSH version cannot locate this message precisely.', navigationMissing: 'Message is missing or deleted. Rescan the index.',
         navigationLimit: 'History loading limit reached. Load earlier messages in the conversation and retry.', navigationStalled: 'History loading made no progress. Check the connection and retry.',
         navigationView: 'Cannot display this message. Switch to the Chat view and retry.', navigationTimeout: 'Message navigation timed out. Retry.', navigationFailed: 'Cannot open this message. Check the connection and retry.',
@@ -226,11 +226,11 @@ window.__ModuleLoader__.load({
           if (!sessions?.retain || !conversation?.binding || !layout?.beginNavigation) throw failure('navigationUnsupported')
           ui.openSession(sessionId)
           // openSession itself advances layout navigation; acquire our guard afterwards.
-          const signal = AbortSignal.any([controller.signal, layout.beginNavigation(), AbortSignal.timeout(20000)])
+          const signal = AbortSignal.any([controller.signal, layout.beginNavigation(), AbortSignal.timeout(120000)])
           const interrupted = () => controller.abort()
           for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) document.addEventListener(type, interrupted, { passive: true })
           stopInput = () => { for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) document.removeEventListener(type, interrupted) }
-          publish({ phase: 'loading', seq })
+          publish({ phase: 'loading', seq, pages: 0 })
           reference = sessions.retain(sessionId, { source: 'controllerOperation', signal })
           const binding = await wait(reference.ready, signal)
           const session = binding.session
@@ -258,6 +258,7 @@ window.__ModuleLoader__.load({
             signal.throwIfAborted()
             const nextHead = binding.eventSource.getSnapshot().entries[0]?.event.seq
             if (nextHead === head) throw failure('navigationStalled')
+            publish({ phase: 'loading', seq, pages: page })
           }
           signal.throwIfAborted()
           // Settled Assistant and Tool rows can anchor before their indexed event.
@@ -520,7 +521,7 @@ window.__ModuleLoader__.load({
           const translate = useT()
           const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
           if (!state || state.phase === 'idle') return null
-          const message = state.phase === 'loading' ? translate('locating')
+          const message = state.phase === 'loading' ? fmt(translate('locating'), { pages: state.pages ?? 0 })
             : state.phase === 'error' ? translate(state.code) : fmt(translate('located'), { seq: state.seq })
           return h('div', { role: state.phase === 'error' ? 'alert' : 'status', 'aria-live': 'polite',
             style: { pointerEvents: 'none', position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', maxWidth: 'min(90vw, 560px)', padding: '10px 14px', borderRadius: 8,
