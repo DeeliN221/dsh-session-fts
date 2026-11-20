@@ -57,5 +57,9 @@ test('async indexer consults persistence again before pruning a missing list ite
   present = false
   await indexer.reconcileAll()
   assert.deepEqual(await store.sessionIds(), [])
+  await store.commit({ id: 'foreign-live', cwd: '/p', parent: null, origin: null, title: 'Live',
+    created_at: 1, updated_at: 1, stamp: 'live:1', indexed_seq: 1 }, [])
+  await indexer.reconcileAll()
+  assert.deepEqual(await store.sessionIds(), ['foreign-live'])
   await indexer.dispose()
 })

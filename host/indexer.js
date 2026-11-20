@@ -114,6 +114,10 @@ export class Indexer {
       const persistence = this.ctx.get('sessionPersistence')
       if (persistence !== undefined) for (const id of await this.store.sessionIds()) {
         if (seen.has(id) || this.ctx.sessions.get(id) !== undefined) continue
+        // Another process may own a live-only Session not visible in this
+        // persistence provider yet. Its absence is not an authoritative delete.
+        const row = await this.store.sessionRow(id)
+        if (row?.stamp?.startsWith('live:')) continue
         if (await persistence.stat(id) !== undefined) continue
         await this.store.deleteSession(id)
       }
