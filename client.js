@@ -18,7 +18,10 @@ window.__ModuleLoader__.load({
         none: '没有找到匹配内容。可以减少关键词或放宽时间范围。', more: '加载更多', untitled: '未命名会话',
         hits: '{n} 处', indexed: '已索引 {sessions} 个会话 · {docs} 条消息', indexing: '正在索引 {done}/{total}',
         reindex: '重新扫描', rebuild: '重建索引', error: '搜索失败：{msg}', hint: '输入关键词开始搜索。索引只保存在本机。',
-        open: '打开会话',
+        open: '打开会话', mode: '搜索方式', titleMode: '标题', fulltextMode: '全文', semanticMode: '语义',
+        searching: '正在搜索…', semanticDisabled: '语义搜索未启用；请先配置嵌入模型。',
+        semanticLoading: '正在加载语义搜索…', semanticIndexing: '正在建立语义索引 {indexed}/{total}',
+        semanticReady: '语义搜索就绪 · {indexed}/{total}', semanticError: '语义搜索出错：{msg}',
       },
       en: {
         title: 'Session search', placeholder: 'Search earlier sessions (space-separated terms must all match)', search: 'Search',
@@ -29,7 +32,10 @@ window.__ModuleLoader__.load({
         none: 'No matches. Try fewer terms or a wider time range.', more: 'Load more', untitled: 'Untitled session',
         hits: '{n} hits', indexed: 'Indexed {sessions} sessions · {docs} messages', indexing: 'Indexing {done}/{total}',
         reindex: 'Rescan', rebuild: 'Rebuild index', error: 'Search failed: {msg}', hint: 'Type to search. The index stays on this machine.',
-        open: 'Open session',
+        open: 'Open session', mode: 'Search mode', titleMode: 'Title', fulltextMode: 'Full text', semanticMode: 'Semantic',
+        searching: 'Searching…', semanticDisabled: 'Semantic search is disabled; configure an embedding model to enable it.',
+        semanticLoading: 'Loading semantic search…', semanticIndexing: 'Indexing semantic search {indexed}/{total}',
+        semanticReady: 'Semantic search ready · {indexed}/{total}', semanticError: 'Semantic search error: {msg}',
       },
     }
     const RANGES = [['today', 'today'], ['7', 'd7'], ['30', 'd30'], ['90', 'd90'], ['all', 'all'], ['custom', 'custom']]
@@ -85,16 +91,22 @@ window.__ModuleLoader__.load({
     const CSS = `
 .sfts-page{height:100%;overflow:auto;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}
 .sfts-inner{max-width:880px;margin:0 auto;padding:28px 24px 48px;display:flex;flex-direction:column;gap:14px}
-.sfts-title{font-size:20px;font-weight:600;margin:0}
-.sfts-bar{display:flex;gap:8px}
+.sfts-title{font-size:20px;font-weight:500;margin:0}
+.sfts-bar{display:flex;flex-wrap:wrap;gap:8px}
+.sfts-bar .sfts-input{flex-basis:180px}
 .sfts-input{flex:1;min-width:0;height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);
-  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;outline:none}
+  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:16px}
 .sfts-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .sfts-btn{height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);
   color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
-.sfts-btn:hover{background:var(--dsw-alias-bg-layer-2)}
+.sfts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
 .sfts-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
 .sfts-btn.small{height:26px;padding:0 10px;font-size:12px}
+.sfts-btn:disabled,.sfts-chip:disabled{opacity:.5;cursor:not-allowed}
+.sfts-page :is(button,input,select):focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
+.sfts-modes{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px}
+.sfts-modes .sfts-chip[aria-pressed="true"]{font-weight:500;border-width:2px}
+.sfts-feedback{font-size:13px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .sfts-filters{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px;color:var(--dsw-alias-label-secondary)}
 .sfts-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .sfts-chip{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l1);background:transparent;
@@ -104,14 +116,14 @@ window.__ModuleLoader__.load({
 .sfts-select,.sfts-date{height:26px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);
   color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:0 6px;max-width:240px}
 .sfts-check{display:flex;align-items:center;gap:4px;cursor:pointer}
-.sfts-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
-.sfts-meta-actions{display:flex;gap:6px}
+.sfts-meta{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.sfts-meta-actions{display:flex;flex-wrap:wrap;gap:6px}
 .sfts-list{display:flex;flex-direction:column;gap:10px}
 .sfts-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;
   cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
-.sfts-card:hover,.sfts-card:focus-visible{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);outline:none}
+.sfts-card:hover,.sfts-card:focus-visible{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
 .sfts-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
-.sfts-card-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sfts-card-title{min-width:0;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sfts-card-sub{font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap;flex-shrink:0}
 .sfts-match{margin-top:8px;font-size:13px;line-height:1.55;display:flex;gap:8px}
 .sfts-role{flex-shrink:0;font-size:11px;padding:1px 6px;border-radius:4px;height:fit-content;margin-top:2px;
@@ -120,13 +132,21 @@ window.__ModuleLoader__.load({
 .sfts-time{color:var(--dsw-alias-label-secondary);font-size:11px;margin-left:6px}
 .sfts-mark{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 35%,transparent);color:inherit;border-radius:2px;padding:0 1px}
 .sfts-empty{padding:32px 0;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px}
-.sfts-error{color:var(--dsw-alias-state-error-primary);font-size:13px}
+.sfts-error{color:var(--dsw-alias-state-error-primary);font-size:13px;overflow-wrap:anywhere}
+@media(max-width:480px){
+  .sfts-inner{padding:20px 12px 32px}
+  .sfts-card-head{flex-wrap:wrap;gap:4px}
+  .sfts-card-sub{white-space:normal;overflow-wrap:anywhere;flex-shrink:1}
+  .sfts-select,.sfts-date{max-width:100%;min-width:0}
+}
+@media(pointer:coarse){.sfts-btn,.sfts-chip,.sfts-select,.sfts-date{min-height:48px}.sfts-check{min-height:48px}}
 `
 
     function makePage({ useT, openSession }) {
       return function SessionFtsPage() {
         const t = useT()
         const [query, setQuery] = useState('')
+        const [mode, setMode] = useState('fulltext')
         const [range, setRange] = useState('30')
         const [customFrom, setCustomFrom] = useState('')
         const [customTo, setCustomTo] = useState('')
@@ -138,55 +158,97 @@ window.__ModuleLoader__.load({
         const [status, setStatus] = useState(null)
         const inputRef = useRef(null)
         const abortRef = useRef(null)
+        const debounceRef = useRef(null)
+        const statusAbortRef = useRef(null)
+        const mountedRef = useRef(false)
+        const searchKey = JSON.stringify([query.trim(), mode, range, customFrom, customTo, cwd, roles, sort, subagents])
 
         const loadStatus = useCallback(() => {
-          api('status').then(setStatus).catch(() => {})
+          if (!mountedRef.current) return
+          statusAbortRef.current?.abort()
+          const controller = new AbortController()
+          statusAbortRef.current = controller
+          api('status', undefined, controller.signal).then(value => {
+            if (!controller.signal.aborted) setStatus(value)
+          }).catch(() => {})
         }, [])
         useEffect(() => {
+          mountedRef.current = true
           loadStatus()
           inputRef.current?.focus()
           const timer = setInterval(loadStatus, 4000)
-          return () => clearInterval(timer)
+          return () => {
+            mountedRef.current = false
+            clearInterval(timer)
+            statusAbortRef.current?.abort()
+          }
         }, [loadStatus])
 
+        // Cancel in the event handler, before React renders or the debounce elapses.
+        const change = (setter, next) => {
+          const current = new Map([[setQuery, query], [setMode, mode], [setRange, range],
+            [setCustomFrom, customFrom], [setCustomTo, customTo], [setCwd, cwd],
+            [setRoles, roles], [setSort, sort], [setSubagents, subagents]]).get(setter)
+          if (Object.is(current, next)) return
+          abortRef.current?.abort()
+          clearTimeout(debounceRef.current)
+          setter(next)
+          setState(prev => setter === setQuery && !String(next).trim()
+            ? { status: 'idle', value: null, error: null }
+            : { ...prev, status: 'loading', error: null })
+        }
         const run = useCallback((offset) => {
+          clearTimeout(debounceRef.current)
+          abortRef.current?.abort()
           const q = query.trim()
           if (q === '') { setState({ status: 'idle', value: null, error: null }); return }
-          abortRef.current?.abort()
           const controller = new AbortController()
           abortRef.current = controller
           const selectedRoles = Object.entries(roles).filter(([, on]) => on).map(([role]) => role)
           const body = {
-            query: q, ...rangeBounds(range, customFrom, customTo), cwd: cwd || undefined, sort,
+            query: q, mode, ...rangeBounds(range, customFrom, customTo), cwd: cwd || undefined, sort,
             roles: selectedRoles.length === 3 ? undefined : selectedRoles, includeSubagents: subagents, limit: 20, offset,
           }
-          setState(prev => ({ status: 'loading', value: offset > 0 ? prev.value : null, error: null }))
+          setState(prev => ({ ...prev, status: 'loading', error: null }))
           api('search', body, controller.signal).then((value) => {
             if (controller.signal.aborted) return
             setState(prev => ({
-              status: 'done', error: null,
-              value: offset > 0 && prev.value ? { ...value, sessions: [...prev.value.sessions, ...value.sessions] } : value,
+              status: 'done', error: null, key: searchKey,
+              value: offset > 0 && prev.key === searchKey && prev.value
+                ? { ...value, sessions: [...prev.value.sessions, ...value.sessions] } : value,
             }))
           }).catch((error) => {
             if (controller.signal.aborted) return
-            setState({ status: 'error', value: null, error: String(error?.message ?? error) })
+            setState(prev => ({ ...prev, status: 'error', error: String(error?.message ?? error) }))
           })
-        }, [query, range, customFrom, customTo, cwd, roles, sort, subagents])
+        }, [query, mode, range, customFrom, customTo, cwd, roles, sort, subagents, searchKey])
 
-        // Re-run on filter changes, debounced for typing.
+        // Cleanup also covers changes triggered outside input events and unmounting.
         useEffect(() => {
-          const timer = setTimeout(() => run(0), 300)
-          return () => clearTimeout(timer)
+          if (!query.trim()) run(0)
+          else debounceRef.current = setTimeout(() => run(0), 300)
+          return () => {
+            clearTimeout(debounceRef.current)
+            abortRef.current?.abort()
+          }
         }, [run])
-        useEffect(() => () => abortRef.current?.abort(), [])
+        useEffect(() => {
+          if (mode === 'semantic' && status?.semantic?.phase === 'disabled') change(setMode, 'fulltext')
+        }, [mode, status?.semantic?.phase])
 
         const terms = query.trim().split(/\s+/).filter(Boolean)
         const value = state.value
         const indexing = status?.indexing?.phase === 'indexing'
-        const toggleRole = role => setRoles(prev => {
-          const next = { ...prev, [role]: !prev[role] }
-          return Object.values(next).some(Boolean) ? next : prev
-        })
+        const semantic = status?.semantic
+        const semanticText = semantic?.phase === 'disabled' ? t('semanticDisabled')
+          : semantic?.phase === 'error' ? fmt(t('semanticError'), { msg: semantic.error || t('semanticMode') })
+          : semantic?.phase === 'ready' || semantic?.phase === 'indexing'
+            ? fmt(t(semantic.phase === 'ready' ? 'semanticReady' : 'semanticIndexing'), { indexed: semantic.indexed, total: semantic.total })
+            : t('semanticLoading')
+        const toggleRole = role => {
+          const next = { ...roles, [role]: !roles[role] }
+          if (Object.values(next).some(Boolean)) change(setRoles, next)
+        }
         const roleOptions = status?.indexToolOutput ? ['user', 'assistant', 'tool'] : ['user', 'assistant']
 
         return h('div', { className: 'sfts-page' },
@@ -196,22 +258,30 @@ window.__ModuleLoader__.load({
             h('form', { className: 'sfts-bar', role: 'search', onSubmit: (e) => { e.preventDefault(); run(0) } },
               h('input', {
                 ref: inputRef, className: 'sfts-input', type: 'search', value: query, placeholder: t('placeholder'),
-                'aria-label': t('title'), onChange: e => setQuery(e.target.value),
+                'aria-label': t('title'), name: 'query', autoCorrect: 'off', autoCapitalize: 'none', spellCheck: false,
+                onChange: e => change(setQuery, e.target.value),
               }),
               h('button', { type: 'submit', className: 'sfts-btn primary' }, t('search'))),
+            h('div', { className: 'sfts-modes', role: 'group', 'aria-label': t('mode') },
+              h('span', null, t('mode')),
+              ['title', 'fulltext', 'semantic'].map(id => h('span', { key: id, title: id === 'semantic' && semantic?.phase === 'disabled' ? t('semanticDisabled') : undefined },
+                h('button', { type: 'button', className: 'sfts-chip', 'aria-pressed': mode === id,
+                  disabled: id === 'semantic' && semantic?.phase === 'disabled',
+                  onClick: () => change(setMode, id) }, t(`${id}Mode`))))),
+            h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, semanticText),
             h('div', { className: 'sfts-filters' },
               h('div', { className: 'sfts-group', role: 'group', 'aria-label': t('range') },
                 h('span', null, t('range')),
                 RANGES.map(([id, key]) => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': range === id, onClick: () => setRange(id),
+                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': range === id, onClick: () => change(setRange, id),
                 }, t(key))),
                 range === 'custom' ? h(React.Fragment, null,
-                  h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('from'), value: customFrom, onChange: e => setCustomFrom(e.target.value) }),
+                  h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('from'), value: customFrom, onChange: e => change(setCustomFrom, e.target.value) }),
                   h('span', null, '–'),
-                  h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('to'), value: customTo, onChange: e => setCustomTo(e.target.value) })) : null),
+                  h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('to'), value: customTo, onChange: e => change(setCustomTo, e.target.value) })) : null),
               h('div', { className: 'sfts-group' },
                 h('span', null, t('workspace')),
-                h('select', { className: 'sfts-select', value: cwd, onChange: e => setCwd(e.target.value), 'aria-label': t('workspace') },
+                h('select', { className: 'sfts-select', value: cwd, onChange: e => change(setCwd, e.target.value), 'aria-label': t('workspace') },
                   h('option', { value: '' }, t('allWorkspaces')),
                   (status?.workspaces ?? []).map(w => h('option', { key: w.cwd, value: w.cwd, title: w.cwd }, `${baseName(w.cwd)} (${w.sessions})`)))),
               h('div', { className: 'sfts-group', role: 'group', 'aria-label': t('roles') },
@@ -222,10 +292,10 @@ window.__ModuleLoader__.load({
               h('div', { className: 'sfts-group' },
                 h('span', null, t('sort')),
                 ['relevance', 'recent'].map(id => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': sort === id, onClick: () => setSort(id),
+                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': sort === id, onClick: () => change(setSort, id),
                 }, t(id)))),
               h('label', { className: 'sfts-check' },
-                h('input', { type: 'checkbox', checked: subagents, onChange: e => setSubagents(e.target.checked) }), t('subagents'))),
+                h('input', { type: 'checkbox', checked: subagents, onChange: e => change(setSubagents, e.target.checked) }), t('subagents'))),
             h('div', { className: 'sfts-meta' },
               h('span', null,
                 value ? fmt(t('results'), { sessions: value.totalSessions, hits: value.totalHits }) + (value.truncated ? t('capped') : '') : '',
@@ -236,6 +306,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'sfts-meta-actions' },
                 h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', {}).then(loadStatus).catch(() => {}) }, t('reindex')),
                 h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', { full: true }).then(loadStatus).catch(() => {}) }, t('rebuild')))),
+            h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite' }, state.status === 'loading' ? t('searching') : ''),
             state.status === 'error' ? h('div', { className: 'sfts-error', role: 'alert' }, fmt(t('error'), { msg: state.error })) : null,
             !value && state.status !== 'loading' && state.status !== 'error' ? h('div', { className: 'sfts-empty' }, t('hint')) : null,
             value && value.sessions.length === 0 ? h('div', { className: 'sfts-empty' }, t('none')) : null,
@@ -253,7 +324,7 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'sfts-snippet' },
                   h(Highlight, { text: match.snippet, terms }),
                   h('span', { className: 'sfts-time' }, fmtTime(match.time)))))))) : null,
-            value && value.sessions.length < value.totalSessions ? h('button', {
+            value && state.key === searchKey && value.sessions.length < value.totalSessions ? h('button', {
               type: 'button', className: 'sfts-btn', onClick: () => run(value.sessions.length), disabled: state.status === 'loading',
             }, t('more')) : null))
       }
