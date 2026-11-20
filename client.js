@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
         hits: '{n} 处', indexed: '已索引 {sessions} 个会话 · {docs} 条消息', indexing: '正在索引 {done}/{total}',
         reindex: '重新扫描', rebuild: '重建索引', error: '搜索失败：{msg}', hint: '输入关键词开始搜索。索引只保存在本机。',
         locating: '正在加载并定位消息… 已加载 {pages} 页历史', located: '已定位消息 #{seq}',
+        navigationArchived: '此会话已归档。请先恢复，再打开此搜索结果。',
+        restoreAndLocate: '恢复并定位', restoring: '正在恢复会话…', navigationRestoreFailed: '无法恢复此会话，请重试。',
         navigationUnsupported: '当前 DSH 无法精确定位这条消息。', navigationMissing: '消息不存在或已删除，请重新扫描索引。',
         navigationLimit: '历史过长，已停止自动加载。请在会话中加载更早消息后重试。', navigationStalled: '历史加载未能前进，请检查连接后重试。',
         navigationView: '无法显示目标消息，请切换到聊天视图后重试。', navigationTimeout: '定位超时，请重试。', navigationFailed: '无法打开目标消息，请检查连接后重试。',
@@ -38,6 +40,8 @@ window.__ModuleLoader__.load({
         hits: '{n} hits', indexed: 'Indexed {sessions} sessions · {docs} messages', indexing: 'Indexing {done}/{total}',
         reindex: 'Rescan', rebuild: 'Rebuild index', error: 'Search failed: {msg}', hint: 'Type to search. The index stays on this machine.',
         locating: 'Loading and locating message… {pages} history pages loaded', located: 'Located message #{seq}',
+        navigationArchived: 'This session is archived. Restore it before opening this search result.',
+        restoreAndLocate: 'Restore and locate', restoring: 'Restoring session…', navigationRestoreFailed: 'Could not restore the session. Retry.',
         navigationUnsupported: 'This DSH version cannot locate this message precisely.', navigationMissing: 'Message is missing or deleted. Rescan the index.',
         navigationLimit: 'History loading limit reached. Load earlier messages in the conversation and retry.', navigationStalled: 'History loading made no progress. Check the connection and retry.',
         navigationView: 'Cannot display this message. Switch to the Chat view and retry.', navigationTimeout: 'Message navigation timed out. Retry.', navigationFailed: 'Cannot open this message. Check the connection and retry.',
@@ -218,6 +222,8 @@ window.__ModuleLoader__.load({
         try {
           const ui = ctx.get('uiWorkspace')
           if (!ui?.openSession) throw failure('navigationUnsupported')
+          const archived = ctx.get('workspaces')?.list?.getSnapshot().archivedSessionIds
+          if (archived?.includes(sessionId)) { publish({ phase: 'archived', sessionId, seq }); return }
           if (seq === undefined) { ui.openSession(sessionId); return }
           if (!Number.isSafeInteger(seq) || seq < 0) throw failure('navigationMissing')
           const sessions = ctx.get('sessions')
@@ -314,7 +320,27 @@ window.__ModuleLoader__.load({
           if (current === controller) current = null
         }
       }
-      return { open, cancel, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) }, getSnapshot: () => snapshot }
+      const canRestore = () => typeof ctx.get('uiWorkspace')?.unarchiveSession === 'function'
+      const restore = async () => {
+        if (snapshot.phase !== 'archived' || !canRestore()) return
+        const target = snapshot
+        cancel()
+        const controller = new AbortController()
+        current = controller
+        const signal = AbortSignal.any([controller.signal, ctx.get('layout')?.beginNavigation?.() || controller.signal, AbortSignal.timeout(120000)])
+        publish({ ...target, phase: 'restoring' })
+        try {
+          await wait(ctx.get('uiWorkspace').unarchiveSession(target.sessionId), signal)
+          signal.throwIfAborted()
+          if (current === controller) await open(target.sessionId, target.seq)
+        } catch (error) {
+          if (current === controller) publish(controller.signal.aborted || error?.name === 'AbortError'
+            ? { phase: 'idle' } : { ...target, code: 'navigationRestoreFailed' })
+        } finally {
+          if (current === controller) current = null
+        }
+      }
+      return { open, cancel, restore, canRestore, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) }, getSnapshot: () => snapshot }
     }
 
     function makePage({ useT, openSession, cancelNavigation }) {
@@ -522,10 +548,16 @@ window.__ModuleLoader__.load({
           const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
           if (!state || state.phase === 'idle') return null
           const message = state.phase === 'loading' ? fmt(translate('locating'), { pages: state.pages ?? 0 })
+            : state.phase === 'restoring' ? translate('restoring')
+            : state.phase === 'archived' ? translate(state.code || 'navigationArchived')
             : state.phase === 'error' ? translate(state.code) : fmt(translate('located'), { seq: state.seq })
-          return h('div', { role: state.phase === 'error' ? 'alert' : 'status', 'aria-live': 'polite',
+          return h('div', { role: state.phase === 'error' || state.code ? 'alert' : 'status', 'aria-live': 'polite',
             style: { pointerEvents: 'none', position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', maxWidth: 'min(90vw, 560px)', padding: '10px 14px', borderRadius: 8,
-              background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-border-l2)', fontSize: 13 } }, message)
+              background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-border-l2)', fontSize: 13 } },
+            message,
+            state.phase === 'archived' && navigation.canRestore() ? h('button', { type: 'button', onClick: navigation.restore,
+              style: { pointerEvents: 'auto', marginLeft: 12, padding: '6px 10px', font: 'inherit', color: 'inherit', cursor: 'pointer', borderRadius: 4,
+                border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-2)' } }, translate('restoreAndLocate')) : null)
         }
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'session-fts-navigation', locale: NS }, NavigationNotice))
         const Page = makePage({ useT, openSession: navigation.open, cancelNavigation: navigation.cancel })

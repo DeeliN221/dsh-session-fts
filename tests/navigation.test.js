@@ -173,6 +173,42 @@ test('total two-minute deadline bounds both initial opening and a pending cold p
     assert.equal(f.navigation.getSnapshot().code, 'navigationTimeout'); assert.equal(f.released, 1); assert.equal(f.scrolls, 0)
   }
 })
+test('archived message and title preflight preserve search without opening or restoring', async () => {
+  for (const seq of [100, undefined]) {
+    const f = fixture(); let restores = 0
+    f.services.workspaces = { list: { getSnapshot: () => ({ archivedSessionIds: ['archived'] }) } }
+    f.services.uiWorkspace.unarchiveSession = async () => { restores++ }
+    await f.navigation.open('archived', seq)
+    assert.equal(f.navigation.getSnapshot().phase, 'archived'); assert.equal(f.opened.length, 0); assert.equal(restores, 0)
+    assert.equal(f.calls, 0); assert.equal(f.released, 0)
+  }
+})
+test('explicit restore runs once then navigates to the original exact message', async () => {
+  const f = fixture({ nodes: [node(100)] }); let archived = true, restores = 0, finish
+  f.services.workspaces = { list: { getSnapshot: () => ({ archivedSessionIds: archived ? ['archived'] : [] }) } }
+  f.services.uiWorkspace.unarchiveSession = async () => { restores++; await new Promise(resolve => finish = resolve); archived = false }
+  await f.navigation.open('archived', 100)
+  const restoring = f.navigation.restore(); await f.navigation.restore()
+  assert.equal(restores, 1); assert.equal(f.navigation.getSnapshot().phase, 'restoring'); assert.equal(f.opened.length, 0)
+  finish(); await f.flush(); await restoring
+  assert.equal(f.opened[0], 'archived'); assert.equal(f.navigation.getSnapshot().seq, 100); assert.equal(f.scrolls, 1)
+})
+test('restore failure preserves an actionable archived target and does not open', async () => {
+  const f = fixture()
+  f.services.workspaces = { list: { getSnapshot: () => ({ archivedSessionIds: ['archived'] }) } }
+  f.services.uiWorkspace.unarchiveSession = async () => { throw new Error('offline') }
+  await f.navigation.open('archived', 100); await f.navigation.restore()
+  assert.equal(f.navigation.getSnapshot().phase, 'archived'); assert.equal(f.navigation.getSnapshot().code, 'navigationRestoreFailed')
+  assert.equal(f.navigation.getSnapshot().seq, 100); assert.equal(f.opened.length, 0)
+})
+test('navigation away during explicit restore never reopens the old target', async () => {
+  const f = fixture(); let finish
+  f.services.workspaces = { list: { getSnapshot: () => ({ archivedSessionIds: ['archived'] }) } }
+  f.services.uiWorkspace.unarchiveSession = () => new Promise(resolve => finish = resolve)
+  await f.navigation.open('archived', 100)
+  const restoring = f.navigation.restore(); f.changeSession(); finish(); await f.flush(); await restoring
+  assert.deepEqual(f.opened, ['elsewhere']); assert.equal(f.navigation.getSnapshot().phase, 'idle')
+})
 test('stalled history and bounded paging report failures', async () => {
   const stalled = fixture({ pages: [[event(100)]] })
   await stalled.navigation.open('stalled', 1)
