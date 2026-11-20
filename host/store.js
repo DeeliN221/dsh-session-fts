@@ -7,6 +7,8 @@
  * Session persistence files.
  */
 
+export { AsyncFtsStore } from './lexical.js'
+
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, openSync, closeSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -19,20 +21,32 @@ const SNIPPETS_PER_SESSION = 3
 export class FtsStore {
   /**
    * @param {string} path - absolute index path.
-   * @param {string} optionsKey - extraction options; a change rebuilds the index.
+   * @param {string} optionsKey - extraction identity; incompatible opens fail.
    */
-  constructor(path, optionsKey) {
+  constructor(path, optionsKey, config = {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.path = path
-    this.revision = 0
     try { closeSync(openSync(path, 'wx', 0o600)) } catch (error) {
       if (error.code !== 'EEXIST') throw error
     }
     this.db = new DatabaseSync(path)
-    try { this._assertOwnership() } catch (error) { this.db.close(); throw error }
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=3000;')
-    this._migrate(optionsKey)
-    this._prepare()
+    const busyTimeout = config.busyTimeoutMs ?? 5000
+    if (!Number.isSafeInteger(busyTimeout) || busyTimeout < 0 || busyTimeout > 60000) {
+      this.db.close()
+      throw new TypeError('session-fts: invalid busyTimeoutMs')
+    }
+    try {
+      this.db.exec(`PRAGMA busy_timeout=${busyTimeout};`)
+      // Ownership, schema creation, and identity binding share one writer lock.
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        this._assertOwnership()
+        this._migrate(optionsKey, config.sourceId ?? 'default')
+        this.db.exec('COMMIT')
+      } catch (error) { this.db.exec('ROLLBACK'); throw error }
+      this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;')
+      this._prepare()
+    } catch (error) { this.db.close(); throw error }
   }
 
   _assertOwnership() {
@@ -49,12 +63,21 @@ export class FtsStore {
     this.db.exec('PRAGMA application_id=1146308166')
   }
 
-  _migrate(optionsKey) {
+  _migrate(optionsKey, sourceId) {
     const db = this.db
     db.exec('CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     const read = key => db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value
-    if (read('schema') !== SCHEMA_VERSION || read('options') !== optionsKey) {
-      db.exec('DROP TABLE IF EXISTS fts; DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS sessions;')
+    if (read('schema') !== undefined && read('schema') !== SCHEMA_VERSION) {
+      throw new Error('session-fts: incompatible index schema; use a distinct index path')
+    }
+    if (read('options') !== undefined && read('options') !== optionsKey) {
+      throw new Error('session-fts: incompatible index options; use a distinct index path')
+    }
+    if (sourceId !== undefined && (typeof sourceId !== 'string' || !sourceId.length)) {
+      throw new TypeError('session-fts: sourceId must be a nonempty stable corpus identity')
+    }
+    if (read('sourceId') !== undefined && read('sourceId') !== sourceId) {
+      throw new Error('session-fts: incompatible sourceId; use a distinct index path')
     }
     db.exec(`
       CREATE TABLE IF NOT EXISTS sessions(
@@ -72,6 +95,17 @@ export class FtsStore {
     const write = db.prepare('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     write.run('schema', SCHEMA_VERSION)
     write.run('options', optionsKey)
+    if (sourceId !== undefined) write.run('sourceId', sourceId)
+    db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')").run()
+  }
+
+  /** Global revision; never a process-local invalidation counter. */
+  get revision() {
+    return Number(this.db.prepare("SELECT value FROM meta WHERE key='revision'").get().value)
+  }
+
+  _bumpRevision() {
+    this.db.prepare("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'").run()
   }
 
   _prepare() {
@@ -109,19 +143,22 @@ export class FtsStore {
    * @param {Array<{seq:number, role:string, time:number, text:string}>} docs - new documents.
    */
   commit(row, docs) {
-    const previous = this.sessionRow(row.id)
     let added = 0
-    this.db.exec('BEGIN')
+    this.db.exec('BEGIN IMMEDIATE')
     try {
+      const previous = this.sessionRow(row.id)
       for (const doc of docs) {
         const inserted = this._insertEvent.get(row.id, doc.seq, doc.role, doc.time, doc.text)
         if (inserted === undefined) continue
         this._insertFts.run(inserted.id, tokenizeForIndex(doc.text))
         added++
       }
-      this._upsert.run({ ...row, doc_count: (previous?.doc_count ?? 0) + added })
+      // A slower scanner must not overwrite newer metadata or move the cursor back.
+      const metadata = previous && previous.indexed_seq > row.indexed_seq ? previous : row
+      const count = this.db.prepare('SELECT count(*) AS n FROM events WHERE session_id=?').get(row.id).n
+      this._upsert.run({ ...metadata, doc_count: count })
+      this._bumpRevision()
       this.db.exec('COMMIT')
-      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -131,13 +168,13 @@ export class FtsStore {
 
   /** Remove one Session and its documents. */
   deleteSession(id) {
-    this.db.exec('BEGIN')
+    this.db.exec('BEGIN IMMEDIATE')
     try {
       this._deleteFts.run(id)
       this._deleteEvents.run(id)
       this._deleteSession.run(id)
+      this._bumpRevision()
       this.db.exec('COMMIT')
-      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -146,11 +183,11 @@ export class FtsStore {
 
   /** Drop every document; the next reconcile rebuilds from the logs. */
   clear() {
-    this.db.exec('BEGIN')
+    this.db.exec('BEGIN IMMEDIATE')
     try {
       this.db.exec("DELETE FROM events; DELETE FROM sessions; INSERT INTO fts(fts) VALUES('delete-all');")
+      this._bumpRevision()
       this.db.exec('COMMIT')
-      this.revision++
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
