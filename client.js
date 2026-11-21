@@ -103,35 +103,42 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = `
-.sfts-page{height:100%;overflow:auto;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}
-.sfts-inner{max-width:880px;margin:0 auto;padding:28px 24px 48px;display:flex;flex-direction:column;gap:14px}
+/* Keep layout local to the panel: split panes can be narrower than the viewport. */
+.sfts-page{height:100%;overflow:auto;container:sfts / inline-size;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}
+.sfts-page *{box-sizing:border-box}
+.sfts-inner{max-width:880px;margin:0 auto;padding:16px 12px 32px;display:flex;flex-direction:column;gap:12px}
 .sfts-title{font-size:20px;font-weight:500;margin:0}
-.sfts-bar{display:flex;flex-wrap:wrap;gap:8px}
-.sfts-bar .sfts-input{flex-basis:180px}
-.sfts-input{flex:1;min-width:0;height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);
-  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:16px}
-.sfts-input:focus{border-color:var(--dsw-alias-brand-primary)}
-.sfts-btn{height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);
+.sfts-bar{display:flex;gap:8px;align-items:stretch}
+.sfts-input{flex:1 1 0;min-width:0;min-height:44px;padding:8px 12px;border-radius:8px;border:1px solid var(--dsw-alias-label-secondary);
+  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:16px;caret-color:currentColor}
+.sfts-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:1}
+.sfts-btn{min-height:36px;padding:6px 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);
   color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
-.sfts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
-.sfts-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
-.sfts-btn.small{height:26px;padding:0 10px;font-size:12px}
+.sfts-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground,var(--dsw-alias-bg-base));min-width:64px}
+.sfts-btn.small{min-height:32px;padding:4px 8px;font-size:12px;background:transparent}
 .sfts-btn:disabled,.sfts-chip:disabled{opacity:.5;cursor:not-allowed}
-.sfts-page :is(button,input,select):focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
-.sfts-modes{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px}
-.sfts-modes .sfts-chip[aria-pressed="true"]{font-weight:500;border-width:2px}
-.sfts-feedback{font-size:13px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
-.sfts-filters{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px;color:var(--dsw-alias-label-secondary)}
-.sfts-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.sfts-chip{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l1);background:transparent;
-  color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
-.sfts-chip[aria-pressed="true"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);
-  background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}
-.sfts-select,.sfts-date{height:26px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);
-  color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:0 6px;max-width:240px}
-.sfts-check{display:flex;align-items:center;gap:4px;cursor:pointer}
-.sfts-meta{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
-.sfts-meta-actions{display:flex;flex-wrap:wrap;gap:6px}
+.sfts-page :is(button,input,select,summary):focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.sfts-modes{display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:13px}
+.sfts-modes>span:first-child{margin-inline-end:6px;color:var(--dsw-alias-label-secondary)}
+.sfts-feedback{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.sfts-feedback:empty{display:none}
+.sfts-filters{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;font-size:13px;color:var(--dsw-alias-label-secondary);padding-block:8px;border-block:1px solid var(--dsw-alias-border-l2)}
+.sfts-group{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;flex-wrap:wrap}
+.sfts-group>span:first-child{white-space:nowrap}
+.sfts-chip{min-height:32px;min-width:32px;padding:5px 10px;border-radius:5px;border:1px solid transparent;background:transparent;
+  color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer}
+.sfts-chip[aria-pressed="true"]{color:var(--dsw-alias-label-primary);font-weight:600;
+  background:color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent)}
+.sfts-select,.sfts-date{min-height:32px;min-width:0;border-radius:5px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);
+  color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;padding:4px 6px;max-width:min(240px,100%)}
+.sfts-check{display:flex;align-items:center;gap:6px;cursor:pointer;min-height:32px}
+.sfts-check input{accent-color:var(--dsw-alias-state-business-primary)}
+.sfts-meta{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.sfts-meta>span:empty{display:none}
+.sfts-index summary{cursor:pointer;min-height:32px;padding-block:6px;line-height:20px;overflow-wrap:anywhere}
+.sfts-index[open] summary{margin-block-end:4px}
+.sfts-meta-actions{display:flex;flex-wrap:wrap;gap:6px;margin-block-start:6px}
+@media(hover:hover){.sfts-btn:not(.primary):hover:not(:disabled),.sfts-chip:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}}
 .sfts-list{display:flex;flex-direction:column;gap:10px}
 .sfts-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;
   cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
@@ -149,13 +156,18 @@ window.__ModuleLoader__.load({
 .sfts-mark{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 35%,transparent);color:inherit;border-radius:2px;padding:0 1px}
 .sfts-empty{padding:32px 0;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px}
 .sfts-error{color:var(--dsw-alias-state-error-primary);font-size:13px;overflow-wrap:anywhere}
-@media(max-width:480px){
-  .sfts-inner{padding:20px 12px 32px}
-  .sfts-card-head{flex-wrap:wrap;gap:4px}
-  .sfts-card-sub{white-space:normal;overflow-wrap:anywhere;flex-shrink:1}
-  .sfts-select,.sfts-date{max-width:100%;min-width:0}
+.sfts-card-head{flex-wrap:wrap;gap:4px}
+.sfts-card-sub{white-space:normal;overflow-wrap:anywhere;flex-shrink:1}
+@container sfts (min-width:600px){
+  .sfts-inner{padding:24px 24px 48px}
+  .sfts-card-head{flex-wrap:nowrap;gap:12px}
 }
-@media(pointer:coarse){.sfts-btn,.sfts-chip,.sfts-select,.sfts-date{min-height:48px}.sfts-check{min-height:48px}}
+@media(pointer:coarse){
+  .sfts-btn,.sfts-chip,.sfts-select,.sfts-date,.sfts-check,.sfts-index summary{min-height:44px}
+  .sfts-chip{min-width:44px}
+  .sfts-select,.sfts-date{font-size:16px}
+}
+
 `
 
     // Public Controllers own history and projections. This adapter only bridges the
@@ -471,13 +483,13 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', className: 'sfts-chip', 'aria-pressed': mode === id,
                   disabled: id === 'semantic' && semantic?.phase === 'disabled',
                   onClick: () => change(setMode, id) }, t(`${id}Mode`))))),
-            h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, semanticText),
+            mode === 'semantic' || semantic?.phase === 'error'
+              ? h('div', { className: semantic?.phase === 'error' ? 'sfts-error' : 'sfts-feedback', role: 'status', 'aria-live': 'polite' }, semanticText) : null,
             h('div', { className: 'sfts-filters' },
               h('div', { className: 'sfts-group', role: 'group', 'aria-label': t('range') },
                 h('span', null, t('range')),
-                RANGES.map(([id, key]) => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': range === id, onClick: () => change(setRange, id),
-                }, t(key))),
+                h('select', { className: 'sfts-select', 'aria-label': t('range'), value: range, onChange: e => change(setRange, e.target.value) },
+                  RANGES.map(([id, key]) => h('option', { key: id, value: id }, t(key)))),
                 range === 'custom' ? h(React.Fragment, null,
                   h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('from'), value: customFrom, onChange: e => change(setCustomFrom, e.target.value) }),
                   h('span', null, '–'),
@@ -494,21 +506,22 @@ window.__ModuleLoader__.load({
                 }, t(role)))),
               h('div', { className: 'sfts-group' },
                 h('span', null, t('sort')),
-                ['relevance', 'recent'].map(id => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': sort === id, onClick: () => change(setSort, id),
-                }, t(id)))),
+                h('select', { className: 'sfts-select', 'aria-label': t('sort'), value: sort, onChange: e => change(setSort, e.target.value) },
+                  ['relevance', 'recent'].map(id => h('option', { key: id, value: id }, t(id))))),
               h('label', { className: 'sfts-check' },
                 h('input', { type: 'checkbox', checked: subagents, onChange: e => change(setSubagents, e.target.checked) }), t('subagents'))),
             h('div', { className: 'sfts-meta' },
               h('span', null,
-                value ? fmt(t('results'), { sessions: value.totalSessions, hits: value.totalHits }) + (value.truncated ? t('capped') : '') : '',
-                value ? ' · ' : '',
+                value ? fmt(t('results'), { sessions: value.totalSessions, hits: value.totalHits }) + (value.truncated ? t('capped') : '') : ''),
+              h('details', { className: 'sfts-index' },
+                h('summary', null,
                 status ? (indexing
                   ? fmt(t('indexing'), { done: status.indexing.done, total: status.indexing.total })
-                  : fmt(t('indexed'), { sessions: status.sessions, docs: status.documents })) : ''),
+                  : fmt(t('indexed'), { sessions: status.sessions, docs: status.documents })) : t('semanticLoading')),
+                h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, semanticText),
               h('span', { className: 'sfts-meta-actions' },
                 h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', {}).then(loadStatus).catch(() => {}) }, t('reindex')),
-                h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', { full: true }).then(loadStatus).catch(() => {}) }, t('rebuild')))),
+                h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', { full: true }).then(loadStatus).catch(() => {}) }, t('rebuild'))))),
             h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite' }, state.status === 'loading' ? t('searching') : ''),
             state.status === 'error' ? h('div', { className: 'sfts-error', role: 'alert' }, fmt(t('error'), { msg: state.error })) : null,
             !value && state.status !== 'loading' && state.status !== 'error' ? h('div', { className: 'sfts-empty' }, t('hint')) : null,

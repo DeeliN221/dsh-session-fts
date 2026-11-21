@@ -44,7 +44,7 @@ test('filter changes cancel during debounce; pagination and active mode no-op', 
   const app=harness();app.requests[0].resolve(status('ready'));await app.flush();app.type('q');app.tick(); const first=app.requests.at(-1);first.resolve(result('Page one'));await app.flush()
   app.button('Full text').props.onClick();app.render();assert.equal(first.options.signal.aborted,false)
   app.button('Load more').props.onClick(); app.render();const page=app.requests.at(-1);assert.equal(page.body.offset,1);page.resolve({...result('Page two')});await app.flush();assert.ok(app.button('Page one'));assert.ok(app.button('Page two'))
-  app.button('Today').props.onClick(); assert.equal(page.options.signal.aborted,true);app.render();app.tick();const filtered=app.requests.at(-1);assert.equal(typeof filtered.body.from,'number');app.unmount();assert.equal(filtered.options.signal.aborted,true)
+  app.nodes().find(n => n.type === 'select' && n.props['aria-label'] === 'Time').props.onChange({target: {value: 'today'}}); assert.equal(page.options.signal.aborted,true);app.render();app.tick();const filtered=app.requests.at(-1);assert.equal(typeof filtered.body.from,'number');app.unmount();assert.equal(filtered.options.signal.aborted,true)
 })
 test('localized semantic states, disabled configuration tooltip, polling abort and teardown', async () => {
   const app=harness('zh');const initial=app.requests[0];app.poll();assert.equal(initial.options.signal.aborted,true);initial.resolve(status('ready'));await app.flush();app.requests.at(-1).resolve(status('disabled'));await app.flush()
