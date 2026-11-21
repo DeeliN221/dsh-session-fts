@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-fts",
-  "version": "0.3.4-zzl.1",
+  "version": "0.3.5-zzl.1",
   "description": "Local layered title, CJK full-text and multilingual semantic session search",
   "license": "MIT",
   "author": "xuhuaiqu",
@@ -72,6 +72,7 @@
     "test": "node --test tests/*.test.js",
     "check": "node --check index.js && node --check client.js && node --check host/semantic-worker.js",
     "bench": "node --expose-gc tests/search.perf.mjs",
-    "test:semantic": "node tests/semantic-smoke.js"
+    "test:semantic": "node tests/semantic-smoke.js",
+    "test:lifecycle": "node --test tests/lifecycle.cordis.mjs"
   }
 }

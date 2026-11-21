@@ -370,5 +370,6 @@ export async function apply(ctx, rawConfig) {
       },
     }), 'session-fts: route')
   })
-  return { retrieval, indexer, semantic, store }
+  // Cordis collects the resolved async return as a cleanup effect.
+  // Resources are already owned by ctx.effect; do not return runtime state.
 }
