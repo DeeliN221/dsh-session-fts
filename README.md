@@ -4,7 +4,7 @@ DeepSeek Harness（DSH）的本地分层会话搜索插件：标题、中文全�
 
 本仓库基于 [xuhuaiqu/dsh-session-fts](https://github.com/xuhuaiqu/dsh-session-fts) 的 MIT 版本维护扩展，保留上游署名与许可证。安装本 fork 的版本化发布物，见 [分层搜索说明](docs/LAYERED-SEARCH.md)；上游安装命令只安装原版全文功能。
 
-Local full-text search over earlier DeepSeek Harness sessions, with reliable Chinese matching, time-range filters, a sidebar search page, and an agent tool. [English summary](#english).
+Local full-text search over earlier DeepSeek Harness sessions, with reliable Chinese matching, time-range filters, a unified workspace search dialog, and an agent tool. [English summary](#english).
 
 ![dsh-session-fts 使用效果](docs/screenshot.png)
 
@@ -29,7 +29,7 @@ DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器�
 - **中文可用。** 入库前给每个中日韩字符两边加空格，让它成为单独的词元；查询编译成连续字符的短语，所以命中结果和字面子串一致。英文按单词匹配，结尾是字母或数字时也匹配前缀（`sqlite` 能找到 `sqlite3`）。
 - **时间范围。** 今天、近 7 / 30 / 90 天、全部、自定义起止日期，默认近 30 天。
 - **筛选和排序。** 工作区、发言方（我 / 助手 / 工具输出）、是否包含子代理会话；可按相关度（bm25）或时间排序。
-- **搜索页面。** 左侧栏“会话搜索”入口。结果按会话分组，每组最多 3 条带高亮和时间的片段，点击打开会话。
+- **统一搜索入口。** 点击工作区原有放大镜或使用 `session.search` 快捷键打开紧凑弹窗，不另占左栏标签。筛选默认收起并展示当前条件，手机与桌面共用界面；结果按会话分组，点击片段定位原始消息。
 - **智能体工具 `session_fts_search`。** 默认只搜当前工作区，不包含当前会话；`scope: "all"` 搜全部工作区。
 - **增量更新。** 启动后对比每个会话的持久化 revision，只读取有变化的会话；会话是只追加的，所以只补新事件。运行中的会话新增消息后约 1.5 秒进入索引。
 
@@ -45,7 +45,7 @@ DSH 内置的会话搜索后端用的是 SQLite FTS5 的 `unicode61` 分词器�
 
 ## 安装
 
-需要 DeepSeek Harness 0.2.2 或更新版本（运行时自带 `node:sqlite`，不需要安装任何依赖）。
+需要 DeepSeek Harness 0.2.2 或更新版本，并配套带 `uiWorkspace.registerSearchHandler` 的 workspace 客户端（本 fork `0.2.2-rc.1-zzl.1`）。缺少该接口时原生搜索仍可用，插件不会另建入口。运行时需支持 `node:sqlite`；语义依赖见分层搜索说明。
 
 从 npm 安装（Desktop 用户把 `web` 换成 `desktop`）：
 
@@ -66,7 +66,7 @@ dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
 1. 克隆本仓库到本地。
 2. 在 DSH 中打开 **插件 → 添加插件**，选择本地目录安装并启用。
 
-安装后打开左侧栏的 **会话搜索**。首次建索引在启动约 3 秒后开始，几十个会话通常不到 1 秒。
+安装后点击工作区原有 **搜索会话** 放大镜。首次建索引在启动约 3 秒后开始，几十个会话通常不到 1 秒。
 
 可选：内置的 `session-query-sqlite` 索引和本插件互相独立。如果之前在 profile 里打开过内置索引，可以在 `cordis.patch.yml` 里把它改回关闭，避免保存两份索引：
 
@@ -162,3 +162,7 @@ A DeepSeek Harness plugin that keeps a local SQLite FTS5 index of earlier sessio
 ## License
 
 [MIT](LICENSE)
+
+## Unified entry maintenance note — 2026-11-22
+
+Version `0.3.6-zzl.1` uses a shell overlay and a disposable Workspace search provider. There is no `main` page or `sidebar.panellist` registration. The overlay is registered only after `uiWorkspace` is available; it accepts requests only while its React seat is mounted. Closing cancels search requests and status polling, retains explicit filters for reopening, and leaves result navigation independent. Global scope defaults to all workspaces and never captures a stale selected Session. Escape, modal focus containment and focus return use native `dialog`; no document-level key handler or custom focus trap is installed. Search modes, filters, pagination, archived-session confirmation and message navigation remain unchanged.
