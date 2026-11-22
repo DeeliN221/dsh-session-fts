@@ -1,5 +1,7 @@
 # dsh-session-fts
 
+仓库：[DeeliN221/dsh-session-fts](https://github.com/DeeliN221/dsh-session-fts) · 安装：`dsh plugin --profile web add ./dsh-session-fts-0.3.8.tgz`（Release 产物）。
+
 DeepSeek Harness（DSH）的本地分层会话搜索插件：标题、中文全文和多语言语义搜索，共用时间范围与工作区筛选。
 
 本仓库基于 [xuhuaiqu/dsh-session-fts](https://github.com/xuhuaiqu/dsh-session-fts) 的 MIT 版本维护扩展，保留上游署名与许可证。安装本 fork 的版本化发布物，见 [分层搜索说明](docs/LAYERED-SEARCH.md)；上游安装命令只安装原版全文功能。
@@ -58,7 +60,7 @@ dsh plugin --profile web add dsh-session-fts
 从 GitHub 源码安装：
 
 ```bash
-dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
+dsh plugin --profile web add github:DeeliN221/dsh-session-fts
 ```
 
 或者从本地目录安装：
@@ -157,7 +159,7 @@ dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts
 <a id="english"></a>
 ## English
 
-A DeepSeek Harness plugin that keeps a local SQLite FTS5 index of earlier sessions. Every CJK character is indexed as its own token and queries compile to consecutive-character phrases, so Chinese text matches exactly where the literal substring occurs, which the built-in `unicode61` index cannot do. It adds a **Session search** page to the left sidebar (time range presets with a 30-day default, custom dates, workspace, author, and subagent filters, relevance or recency order) and a `session_fts_search` agent tool scoped to the current workspace by default. Only text the person typed and assistant replies are indexed; injected context and reasoning are skipped, and tool output is opt-in through `indexToolOutput`. Install it in DSH 0.2.2 or later with `dsh plugin --profile web add dsh-session-fts` (npm), `dsh plugin --profile web add github:xuhuaiqu/dsh-session-fts` (source), or add a cloned directory under **Plugins → Add plugin**. No dependencies, no network access. Design notes (in Chinese): [docs/DESIGN.md](docs/DESIGN.md).
+A DeepSeek Harness plugin that keeps a local SQLite FTS5 index of earlier sessions. Every CJK character is indexed as its own token and queries compile to consecutive-character phrases, so Chinese text matches exactly where the literal substring occurs, which the built-in `unicode61` index cannot do. It adds a **Session search** page to the left sidebar (time range presets with a 30-day default, custom dates, workspace, author, and subagent filters, relevance or recency order) and a `session_fts_search` agent tool scoped to the current workspace by default. Only text the person typed and assistant replies are indexed; injected context and reasoning are skipped, and tool output is opt-in through `indexToolOutput`. Install it in DSH 0.2.2 or later with `dsh plugin --profile web add dsh-session-fts` (npm), `dsh plugin --profile web add github:DeeliN221/dsh-session-fts` (source), or add a cloned directory under **Plugins → Add plugin**. No dependencies, no network access. Design notes (in Chinese): [docs/DESIGN.md](docs/DESIGN.md).
 
 ## License
 
