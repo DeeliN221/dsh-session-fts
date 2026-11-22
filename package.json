@@ -72,6 +72,7 @@
     "test": "node --test tests/*.test.js",
     "check": "node --check index.js && node --check client.js && node --check host/semantic-worker.js",
     "bench": "node --expose-gc tests/search.perf.mjs",
-    "test:semantic": "node tests/semantic-smoke.js"
+    "test:semantic": "node tests/semantic-smoke.js",
+    "test:lifecycle": "node --test tests/lifecycle.cordis.mjs"
   }
 }
