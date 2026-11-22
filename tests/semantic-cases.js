@@ -226,3 +226,17 @@ test('query queue stays bounded while refresh yields between batches', async t =
   assert.ok(results.some(r=>r.status==='fulfilled'))
   await refresh
 })
+
+test('native FTS generation cursor embeds append only and repairs destructive rebuild',async t=>{
+  const {FtsStore}=await import('../host/store.js')
+  const dir=mkdtempSync(join(tmpdir(),'semantic-native-')),path=join(dir,'fts.sqlite')
+  const store=new FtsStore(path,'native')
+  const semantic=new SemanticSearch({path,semantic:{enabled:true,model:'test',cacheDir:join(dir,'models'),batchSize:2,chunkChars:100,queryCacheSize:2,minScore:0,maxCandidates:20}})
+  t.after(async()=>{await semantic.close();store.close();rmSync(dir,{recursive:true,force:true})})
+  const row={id:'s',cwd:'/a',parent:null,origin:null,title:'source',created_at:1,updated_at:10,stamp:'one',indexed_seq:1}
+  store.commit(row,[{seq:1,role:'user',time:10,text:'apple'}]);await semantic.refresh();assert.equal(semantic.status.done,1)
+  await semantic.refresh();assert.equal(semantic.status.done,0)
+  store.commit({...row,indexed_seq:2,stamp:'two'},[{seq:2,role:'user',time:11,text:'banana'}]);await semantic.refresh();assert.equal(semantic.status.done,1);assert.equal(semantic.status.indexed,2)
+  store.clear();store.commit(row,[{seq:1,role:'user',time:10,text:'banana'}]);await semantic.refresh();assert.equal(semantic.status.indexed,1)
+  const result=await semantic.search({query:'banana',offset:0,limit:10});assert.equal(result.sessions[0].matches[0].snippet,'banana')
+})

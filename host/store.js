@@ -9,6 +9,7 @@
 
 export { AsyncFtsStore } from './lexical.js'
 
+import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, openSync, closeSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -93,6 +94,7 @@ export class FtsStore {
         tok, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2');
     `)
     const write = db.prepare('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('generation',?)").run(randomUUID())
     write.run('schema', SCHEMA_VERSION)
     write.run('options', optionsKey)
     if (sourceId !== undefined) write.run('sourceId', sourceId)
@@ -170,6 +172,7 @@ export class FtsStore {
   deleteSession(id) {
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      this.db.prepare("UPDATE meta SET value=? WHERE key='generation'").run(randomUUID())
       this._deleteFts.run(id)
       this._deleteEvents.run(id)
       this._deleteSession.run(id)
@@ -185,6 +188,7 @@ export class FtsStore {
   clear() {
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      this.db.prepare("UPDATE meta SET value=? WHERE key='generation'").run(randomUUID())
       this.db.exec("DELETE FROM events; DELETE FROM sessions; INSERT INTO fts(fts) VALUES('delete-all');")
       this._bumpRevision()
       this.db.exec('COMMIT')

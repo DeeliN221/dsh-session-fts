@@ -58,6 +58,7 @@ let state = { phase: 'loading', ready: false, done: 0, indexed: 0, total: 0,
   error: null, lastError: null, model: options.model }
 const queries = []
 const cache = new Map()
+let needsCleanup = true
 let running = false
 const jobs = []
 const yieldTurn = () => new Promise(resolve => setImmediate(resolve))
@@ -205,7 +206,7 @@ async function refresh() {
     const token = randomUUID()
     transaction(() => db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('writer',?)").run(token))
     leaseToken = token
-    cleanOrphans()
+    if (needsCleanup) { cleanOrphans(); needsCleanup = false }
     await reconcile()
   } finally { await unlock() }
 }
@@ -213,17 +214,21 @@ async function refresh() {
 async function reconcile() {
   status({ phase: 'indexing', ready: true, done: 0, total: db.prepare('SELECT count(*) AS n FROM source.events').get().n,
     error: null, lastError: null })
+  const hasMeta = db.prepare("SELECT 1 FROM source.sqlite_master WHERE name='meta'").get()
+  const generation = hasMeta ? db.prepare("SELECT value FROM source.meta WHERE key='generation'").get()?.value : undefined
+  const previousGeneration = db.prepare("SELECT value FROM semantic_meta WHERE key='sourceGeneration'").get()?.value
+  const full = generation === undefined || previousGeneration !== generation
   // Remove absent/replaced source rows before adding anything. This also handles
   // rowid reuse when the disposable FTS database is rebuilt.
-  const obsolete = db.prepare(`SELECT d.event_id FROM semantic_documents d LEFT JOIN source.events e
+  const obsolete = full ? db.prepare(`SELECT d.event_id FROM semantic_documents d LEFT JOIN source.events e
     ON e.id=d.event_id AND e.session_id=d.session_id AND e.seq=d.seq AND e.text=d.source_text
-    WHERE e.id IS NULL`).all()
+    WHERE e.id IS NULL`).all() : []
   transaction(() => { for (const row of obsolete) removeDocument(row.event_id) })
-  let after = 0
+  let after = full ? 0 : Number(db.prepare("SELECT value FROM semantic_meta WHERE key='sourceCursor'").get()?.value ?? 0)
   let indexed = db.prepare('SELECT count(*) AS n FROM semantic_documents').get().n
   status({ indexed })
   while (true) {
-    const events = db.prepare(`SELECT e.* FROM source.events e WHERE e.id>? ORDER BY e.id LIMIT ?`)
+    const events = db.prepare(`SELECT e.* FROM source.events e WHERE e.id>? AND NOT EXISTS (SELECT 1 FROM semantic_documents d WHERE d.event_id=e.id) ORDER BY e.id LIMIT ?`)
       .all(after, options.batchSize)
     if (!events.length) break
     for (const event of events) {
@@ -231,6 +236,8 @@ async function reconcile() {
       const hash = createHash('sha256').update(event.text).digest('hex')
       const previous = db.prepare('SELECT hash FROM semantic_documents WHERE event_id=?').get(event.id)
       if (previous?.hash === hash) { state.done++; continue }
+      // A previous writer may have died after committing some chunks.
+      transaction(() => removeDocument(event.id))
       // Only bounded chunk batches enter inference, even for very large events.
       const chunks = []
       for (let start = 0; start < event.text.length; start += options.chunkChars) {
@@ -253,6 +260,7 @@ async function reconcile() {
         transaction(() => db.prepare('INSERT INTO semantic_documents(event_id,session_id,seq,hash,source_text) VALUES(?,?,?,?,?)')
           .run(event.id, event.session_id, event.seq, hash, event.text))
       } catch (error) {
+        needsCleanup = true
         transaction(() => { removeDocument(event.id) })
         throw error
       }
@@ -266,6 +274,10 @@ async function reconcile() {
     await yieldTurn()
     await serveQueries()
   }
+  transaction(() => {
+    db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('sourceCursor',?)").run(String(after))
+    db.prepare("INSERT OR REPLACE INTO semantic_meta VALUES('sourceGeneration',?)").run(generation ?? '')
+  })
   status({ phase: 'ready', ready: true, indexed, done: state.done })
 }
 

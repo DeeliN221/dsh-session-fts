@@ -5,12 +5,11 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useState, useEffect, useRef, useCallback, useSyncExternalStore } = React
     const NS = 'session-fts'
-    const PANEL = 'session-fts'
     const DAY = 86400000
 
     const DICT = {
       zh: {
-        title: '会话搜索', placeholder: '搜索历史会话内容（空格分隔多个词，同时匹配）', search: '搜索',
+        close: '关闭搜索', filters: '筛选', title: '会话搜索', placeholder: '搜索会话，空格分隔关键词', search: '搜索',
         range: '时间', today: '今天', d7: '近 7 天', d30: '近 30 天', d90: '近 90 天', all: '全部', custom: '自定义',
         from: '从', to: '到', workspace: '工作区', allWorkspaces: '全部工作区', roles: '内容',
         user: '我', assistant: '助手', tool: '工具输出', sort: '排序', relevance: '相关度', recent: '最近',
@@ -31,7 +30,7 @@ window.__ModuleLoader__.load({
         semanticReady: '语义搜索就绪 · {indexed}/{total}', semanticError: '语义搜索出错：{msg}',
       },
       en: {
-        title: 'Session search', placeholder: 'Search earlier sessions (space-separated terms must all match)', search: 'Search',
+        close: 'Close search', filters: 'Filters', title: 'Session search', placeholder: 'Search sessions, separate terms with spaces', search: 'Search',
         range: 'Time', today: 'Today', d7: 'Last 7 days', d30: 'Last 30 days', d90: 'Last 90 days', all: 'All time', custom: 'Custom',
         from: 'From', to: 'To', workspace: 'Workspace', allWorkspaces: 'All workspaces', roles: 'Content',
         user: 'Me', assistant: 'Assistant', tool: 'Tool output', sort: 'Sort', relevance: 'Relevance', recent: 'Recent',
@@ -94,68 +93,71 @@ window.__ModuleLoader__.load({
       return { from: Date.now() - Number(range) * DAY }
     }
 
-    function SearchIcon(props) {
-      const size = typeof props.size === 'number' ? props.size : 16
-      return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
-        h('path', { d: 'M4 5h7M4 9h5M4 13h4' }),
-        h('circle', { cx: 15, cy: 13, r: 5 }),
-        h('path', { d: 'm19 17 3 3' }))
-    }
-
     const CSS = `
-.sfts-page{height:100%;overflow:auto;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}
-.sfts-inner{max-width:880px;margin:0 auto;padding:28px 24px 48px;display:flex;flex-direction:column;gap:14px}
-.sfts-title{font-size:20px;font-weight:500;margin:0}
-.sfts-bar{display:flex;flex-wrap:wrap;gap:8px}
-.sfts-bar .sfts-input{flex-basis:180px}
-.sfts-input{flex:1;min-width:0;height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);
-  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:16px}
-.sfts-input:focus{border-color:var(--dsw-alias-brand-primary)}
-.sfts-btn{height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);
-  color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
-.sfts-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
-.sfts-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
-.sfts-btn.small{height:26px;padding:0 10px;font-size:12px}
+/* Search owns one top-layer dialog; all styling remains theme-local. */
+.sfts-dialog{box-sizing:border-box;width:min(48rem,calc(100% - 32px));max-width:100%;max-height:calc(100dvh - 48px);margin:auto;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);box-shadow:0 20px 60px #0003;overflow:auto;overscroll-behavior:contain;font:inherit}
+.sfts-dialog::backdrop{background:#0005;overflow:hidden;overscroll-behavior:contain}
+.sfts-page{container:sfts / inline-size;min-width:0}
+.sfts-page *{box-sizing:border-box}
+.sfts-inner{display:flex;flex-direction:column;gap:12px;padding:20px}
+.sfts-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sfts-title{font-size:18px;font-weight:600;margin:0}
+.sfts-close{display:grid;place-items:center;width:40px;height:40px;flex:none}
+.sfts-bar{display:flex;gap:8px;align-items:stretch}
+.sfts-input{flex:1 1 0;min-width:0;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);color:inherit;font:inherit;font-size:16px;caret-color:var(--dsw-alias-state-business-primary)}
+.sfts-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:1}
+.sfts-btn{min-height:36px;padding:6px 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:inherit;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.sfts-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground,var(--dsw-alias-bg-base));min-width:64px}
+.sfts-btn.small{min-height:36px;padding:4px 8px;font-size:12px;background:transparent}
 .sfts-btn:disabled,.sfts-chip:disabled{opacity:.5;cursor:not-allowed}
-.sfts-page :is(button,input,select):focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
-.sfts-modes{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px}
-.sfts-modes .sfts-chip[aria-pressed="true"]{font-weight:500;border-width:2px}
-.sfts-feedback{font-size:13px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
-.sfts-filters{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px;color:var(--dsw-alias-label-secondary)}
-.sfts-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.sfts-chip{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l1);background:transparent;
-  color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
-.sfts-chip[aria-pressed="true"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);
-  background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}
-.sfts-select,.sfts-date{height:26px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);
-  color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:0 6px;max-width:240px}
-.sfts-check{display:flex;align-items:center;gap:4px;cursor:pointer}
-.sfts-meta{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
-.sfts-meta-actions{display:flex;flex-wrap:wrap;gap:6px}
-.sfts-list{display:flex;flex-direction:column;gap:10px}
-.sfts-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:12px 14px;
-  cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
-.sfts-card:hover{border-color:var(--dsw-alias-border-l2)}
-.sfts-hit{border:0;background:transparent;color:inherit;text-align:left;font:inherit;width:100%;cursor:pointer;padding:4px;border-radius:4px}
+.sfts-page :is(button,input,select,summary):focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.sfts-page ::selection{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-bg-base)}
+.sfts-modes{display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:13px}
+.sfts-modes>span:first-child{margin-inline-end:8px;color:var(--dsw-alias-label-secondary)}
+.sfts-feedback{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.sfts-feedback:empty{display:none}
+.sfts-filter-details{border-block:1px solid var(--dsw-alias-border-l2)}
+.sfts-filter-details>summary{cursor:pointer;padding-block:8px;min-height:40px;font-size:13px;line-height:24px;overflow-wrap:anywhere}
+.sfts-filter-summary{color:var(--dsw-alias-label-secondary);margin-inline-start:8px;font-size:12px}
+.sfts-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;padding-block:8px 16px;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.sfts-group{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;flex-wrap:wrap}
+.sfts-group>span:first-child{white-space:nowrap}
+.sfts-chip{min-height:36px;min-width:40px;padding:6px 10px;border-radius:5px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer}
+.sfts-chip[aria-pressed="true"]{color:var(--dsw-alias-label-primary);font-weight:600;background:color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent)}
+.sfts-select,.sfts-date{min-height:36px;min-width:0;border-radius:5px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;padding:6px;max-width:100%;flex:1}
+.sfts-check{display:flex;align-items:center;gap:8px;cursor:pointer;min-height:36px}
+.sfts-check input{accent-color:var(--dsw-alias-state-business-primary)}
+.sfts-meta{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.sfts-meta>span:empty{display:none}
+.sfts-index summary{cursor:pointer;min-height:36px;padding-block:8px;line-height:20px;overflow-wrap:anywhere}
+.sfts-meta-actions{display:flex;flex-wrap:wrap;gap:8px;margin-block-start:8px}
+@media(hover:hover){.sfts-btn:not(.primary):hover:not(:disabled),.sfts-chip:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}}
+.sfts-list{display:flex;flex-direction:column;gap:0}
+.sfts-card{border-bottom:1px solid var(--dsw-alias-border-l1);padding:12px 0;text-align:left;font:inherit;color:inherit;width:100%;min-width:0}
+.sfts-card:first-child{padding-top:0}
+.sfts-card:last-child{border-bottom:0}
+.sfts-hit{border:0;background:transparent;color:inherit;text-align:left;font:inherit;width:100%;min-width:0;cursor:pointer;padding:6px;border-radius:6px;min-height:40px}
 .sfts-hit:hover{background:var(--dsw-alias-bg-layer-2)}
-.sfts-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
-.sfts-card-title{min-width:0;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sfts-card-sub{font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap;flex-shrink:0}
-.sfts-match{margin-top:8px;font-size:13px;line-height:1.55;display:flex;gap:8px}
-.sfts-role{flex-shrink:0;font-size:11px;padding:1px 6px;border-radius:4px;height:fit-content;margin-top:2px;
-  border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary)}
-.sfts-snippet{word-break:break-word;color:var(--dsw-alias-label-primary)}
-.sfts-time{color:var(--dsw-alias-label-secondary);font-size:11px;margin-left:6px}
+.sfts-card-head{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.sfts-card-title{min-width:0;font-size:15px;font-weight:600;overflow-wrap:anywhere;line-height:1.4}
+.sfts-card-sub{font-size:12px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;line-height:1.5}
+.sfts-match{margin-top:4px;font-size:13px;line-height:1.6;display:flex;gap:8px}
+.sfts-role{flex-shrink:0;font-size:11px;min-width:28px;color:var(--dsw-alias-label-secondary);padding-top:2px}
+.sfts-snippet{min-width:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
+.sfts-time{color:var(--dsw-alias-label-secondary);font-size:11px;margin-inline-start:8px}
 .sfts-mark{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 35%,transparent);color:inherit;border-radius:2px;padding:0 1px}
-.sfts-empty{padding:32px 0;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px}
+.sfts-empty{padding:24px 8px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}
 .sfts-error{color:var(--dsw-alias-state-error-primary);font-size:13px;overflow-wrap:anywhere}
-@media(max-width:480px){
-  .sfts-inner{padding:20px 12px 32px}
-  .sfts-card-head{flex-wrap:wrap;gap:4px}
-  .sfts-card-sub{white-space:normal;overflow-wrap:anywhere;flex-shrink:1}
-  .sfts-select,.sfts-date{max-width:100%;min-width:0}
+@media(max-width:600px){
+ .sfts-dialog{width:calc(100% - 16px);max-height:calc(100dvh - 16px);margin:8px auto;border-radius:10px}
+ .sfts-inner{padding:12px;gap:8px}
+ .sfts-btn,.sfts-chip,.sfts-select,.sfts-date,.sfts-check,.sfts-hit,.sfts-close{min-height:44px}
+ .sfts-select,.sfts-date{font-size:16px}
+ .sfts-filter-details>summary,.sfts-index summary{min-height:44px}
+ .sfts-filters{grid-template-columns:1fr;gap:8px}
+ .sfts-modes>span:first-child{display:none}
+ .sfts-meta{flex-direction:column;gap:0}
 }
-@media(pointer:coarse){.sfts-btn,.sfts-chip,.sfts-select,.sfts-date{min-height:48px}.sfts-check{min-height:48px}}
 `
 
     // Public Controllers own history and projections. This adapter only bridges the
@@ -344,7 +346,9 @@ window.__ModuleLoader__.load({
     }
 
     function makePage({ useT, openSession, cancelNavigation }) {
-      return function SessionFtsPage() {
+      return function SessionFtsPage({ useSearch, closeSearch, setReady }) {
+        const request = useSearch(value => value)
+        const dialogRef = useRef(null)
         const t = useT()
         const [query, setQuery] = useState('')
         const [mode, setMode] = useState('fulltext')
@@ -374,6 +378,19 @@ window.__ModuleLoader__.load({
           }).catch(() => {})
         }, [])
         useEffect(() => {
+          setReady(true)
+          return () => { setReady(false); dialogRef.current?.close() }
+        }, [setReady])
+        useEffect(() => {
+          const dialog = dialogRef.current
+          if (!dialog) return
+          if (request.open) {
+            if (!dialog.open) dialog.showModal()
+            inputRef.current?.focus()
+          } else if (dialog.open) dialog.close()
+        }, [request])
+        useEffect(() => {
+          if (!request.open) return
           mountedRef.current = true
           loadStatus()
           inputRef.current?.focus()
@@ -383,7 +400,7 @@ window.__ModuleLoader__.load({
             clearInterval(timer)
             statusAbortRef.current?.abort()
           }
-        }, [loadStatus])
+        }, [loadStatus, request.open])
 
         // Cancel in the event handler, before React renders or the debounce elapses.
         const change = (setter, next) => {
@@ -427,13 +444,14 @@ window.__ModuleLoader__.load({
 
         // Cleanup also covers changes triggered outside input events and unmounting.
         useEffect(() => {
+          if (!request.open) return
           if (!query.trim()) run(0)
           else debounceRef.current = setTimeout(() => run(0), 300)
           return () => {
             clearTimeout(debounceRef.current)
             abortRef.current?.abort()
           }
-        }, [run])
+        }, [run, request.open])
         useEffect(() => {
           if (mode === 'semantic' && status?.semantic?.phase === 'disabled') change(setMode, 'fulltext')
         }, [mode, status?.semantic?.phase])
@@ -454,10 +472,21 @@ window.__ModuleLoader__.load({
         }
         const roleOptions = status?.indexToolOutput ? ['user', 'assistant', 'tool'] : ['user', 'assistant']
 
-        return h('div', { className: 'sfts-page' },
+        const summary = [t(RANGES.find(([id]) => id === range)?.[1] || 'custom'),
+          range === 'custom' ? [customFrom, customTo].filter(Boolean).join(' – ') : '',
+          cwd ? baseName(cwd) : t('allWorkspaces'),
+          roleOptions.filter(role => roles[role]).map(role => t(role)).join(' / '), t(sort),
+          subagents ? t('subagents') : ''].filter(Boolean).join(' · ')
+        const dismiss = () => { cancelNavigation(); closeSearch() }
+        const navigate = (sessionId, seq) => { closeSearch(); openSession(sessionId, seq) }
+        return h('dialog', { ref: dialogRef, className: 'sfts-dialog', 'aria-labelledby': 'sfts-title', onClose: closeSearch, onCancel: dismiss },
+          h('div', { className: 'sfts-page' },
           h('style', null, CSS),
           h('div', { className: 'sfts-inner' },
-            h('h1', { className: 'sfts-title' }, t('title')),
+            h('div', { className: 'sfts-header' },
+              h('h2', { className: 'sfts-title', id: 'sfts-title' }, t('title')),
+              h('button', { type: 'button', className: 'sfts-btn sfts-close', 'aria-label': t('close'), onClick: dismiss },
+                h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, 'aria-hidden': true }, h('path', { d: 'm6 6 12 12M18 6 6 18' })))),
             h('form', { className: 'sfts-bar', role: 'search', onSubmit: (e) => { e.preventDefault(); run(0) } },
               h('input', {
                 ref: inputRef, className: 'sfts-input', type: 'search', value: query, placeholder: t('placeholder'),
@@ -471,13 +500,15 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', className: 'sfts-chip', 'aria-pressed': mode === id,
                   disabled: id === 'semantic' && semantic?.phase === 'disabled',
                   onClick: () => change(setMode, id) }, t(`${id}Mode`))))),
-            h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, semanticText),
+            mode === 'semantic' || semantic?.phase === 'error'
+              ? h('div', { className: semantic?.phase === 'error' ? 'sfts-error' : 'sfts-feedback', role: 'status', 'aria-live': 'polite' }, semanticText) : null,
+            h('details', { className: 'sfts-filter-details' },
+              h('summary', null, t('filters'), h('span', { className: 'sfts-filter-summary' }, summary)),
             h('div', { className: 'sfts-filters' },
               h('div', { className: 'sfts-group', role: 'group', 'aria-label': t('range') },
                 h('span', null, t('range')),
-                RANGES.map(([id, key]) => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': range === id, onClick: () => change(setRange, id),
-                }, t(key))),
+                h('select', { className: 'sfts-select', 'aria-label': t('range'), value: range, onChange: e => change(setRange, e.target.value) },
+                  RANGES.map(([id, key]) => h('option', { key: id, value: id }, t(key)))),
                 range === 'custom' ? h(React.Fragment, null,
                   h('input', { type: 'date', className: 'sfts-date', 'aria-label': t('from'), value: customFrom, onChange: e => change(setCustomFrom, e.target.value) }),
                   h('span', null, '–'),
@@ -494,21 +525,22 @@ window.__ModuleLoader__.load({
                 }, t(role)))),
               h('div', { className: 'sfts-group' },
                 h('span', null, t('sort')),
-                ['relevance', 'recent'].map(id => h('button', {
-                  key: id, type: 'button', className: 'sfts-chip', 'aria-pressed': sort === id, onClick: () => change(setSort, id),
-                }, t(id)))),
+                h('select', { className: 'sfts-select', 'aria-label': t('sort'), value: sort, onChange: e => change(setSort, e.target.value) },
+                  ['relevance', 'recent'].map(id => h('option', { key: id, value: id }, t(id))))),
               h('label', { className: 'sfts-check' },
-                h('input', { type: 'checkbox', checked: subagents, onChange: e => change(setSubagents, e.target.checked) }), t('subagents'))),
+                h('input', { type: 'checkbox', checked: subagents, onChange: e => change(setSubagents, e.target.checked) }), t('subagents')))),
             h('div', { className: 'sfts-meta' },
               h('span', null,
-                value ? fmt(t('results'), { sessions: value.totalSessions, hits: value.totalHits }) + (value.truncated ? t('capped') : '') : '',
-                value ? ' · ' : '',
+                value ? fmt(t('results'), { sessions: value.totalSessions, hits: value.totalHits }) + (value.truncated ? t('capped') : '') : ''),
+              h('details', { className: 'sfts-index' },
+                h('summary', null,
                 status ? (indexing
                   ? fmt(t('indexing'), { done: status.indexing.done, total: status.indexing.total })
-                  : fmt(t('indexed'), { sessions: status.sessions, docs: status.documents })) : ''),
+                  : fmt(t('indexed'), { sessions: status.sessions, docs: status.documents })) : t('semanticLoading')),
+                h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite', 'aria-atomic': true }, semanticText),
               h('span', { className: 'sfts-meta-actions' },
                 h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', {}).then(loadStatus).catch(() => {}) }, t('reindex')),
-                h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', { full: true }).then(loadStatus).catch(() => {}) }, t('rebuild')))),
+                h('button', { type: 'button', className: 'sfts-btn small', onClick: () => api('reindex', { full: true }).then(loadStatus).catch(() => {}) }, t('rebuild'))))),
             h('div', { className: 'sfts-feedback', role: 'status', 'aria-live': 'polite' }, state.status === 'loading' ? t('searching') : ''),
             state.status === 'error' ? h('div', { className: 'sfts-error', role: 'alert' }, fmt(t('error'), { msg: state.error })) : null,
             !value && state.status !== 'loading' && state.status !== 'error' ? h('div', { className: 'sfts-empty' }, t('hint')) : null,
@@ -516,12 +548,12 @@ window.__ModuleLoader__.load({
             value ? h('div', { className: 'sfts-list' },
               value.sessions.map(session => h('article', { key: session.sessionId, className: 'sfts-card' },
               h('button', { type: 'button', className: 'sfts-card-head sfts-hit', title: t('open'),
-                onClick: () => openSession(session.sessionId) },
+                onClick: () => navigate(session.sessionId) },
                 h('span', { className: 'sfts-card-title' }, session.title || t('untitled')),
                 h('span', { className: 'sfts-card-sub' },
                   `${baseName(session.cwd)} · ${fmt(t('hits'), { n: session.hits })} · ${fmtTime(session.lastMatchAt)}`)),
               session.matches.map(match => h('button', { key: match.seq, type: 'button', className: 'sfts-match sfts-hit',
-                onClick: () => openSession(session.sessionId, match.seq),
+                onClick: () => navigate(session.sessionId, match.seq),
                 'aria-label': `${t('open')} · ${t(match.role)} · ${fmtTime(match.time)} · #${match.seq}` },
                 h('span', { className: 'sfts-role' }, t(match.role)),
                 h('span', { className: 'sfts-snippet' },
@@ -529,12 +561,12 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'sfts-time' }, fmtTime(match.time)))))))) : null,
             value && state.key === searchKey && value.sessions.length < value.totalSessions ? h('button', {
               type: 'button', className: 'sfts-btn', onClick: () => run(value.sessions.length), disabled: state.status === 'loading',
-            }, t('more')) : null))
+            }, t('more')) : null)))
       }
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'uiWorkspace'],
       apply(ctx) {
         for (const [locale, dict] of Object.entries(DICT)) ctx.effect(() => ctx.locale.register(NS, locale, dict), `session-fts: ${locale}`)
         const t = ctx.locale.bind(NS)
@@ -561,10 +593,22 @@ window.__ModuleLoader__.load({
         }
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'session-fts-navigation', locale: NS }, NavigationNotice))
         const Page = makePage({ useT, openSession: navigation.open, cancelNavigation: navigation.cancel })
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL, locale: NS }, Page))
-        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: PANEL, order: 30, label: () => t('title'), locale: NS,
-        }, SearchIcon))
+        // The shell occurrence owns readiness, so an unmounted overlay never swallows search.
+        let snapshot = { open: false, revision: 0 }, ready = false
+        const listeners = new Set()
+        const publish = next => { snapshot = next; for (const listener of listeners) listener() }
+        const search = { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
+        const closeSearch = () => { if (snapshot.open) publish({ ...snapshot, open: false }) }
+        const setReady = value => { ready = value; if (!value) closeSearch() }
+        ctx.slots.inject('shell.overlay', () => {
+          ctx.slots.register({ name: 'shell.overlay', id: 'session-fts-dialog', locale: NS,
+            inject: () => ({ hooks: { search }, closeSearch, setReady }) }, Page)
+          ctx.effect(() => ctx.get('uiWorkspace')?.registerSearchHandler?.(() => {
+            if (!ready) return false
+            publish({ open: true, revision: snapshot.revision + 1 })
+            return true
+          }), 'session-fts: unified search opener')
+        })
       },
     }
   },

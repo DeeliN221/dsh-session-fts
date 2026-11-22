@@ -7,12 +7,13 @@
  * machine; semantic warmup downloads model assets when not cached.
  */
 
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { AsyncFtsStore } from './host/lexical.js'
 import { Indexer } from './host/indexer.js'
 import { SemanticSearch } from './host/semantic.js'
 import { compileQuery } from './host/text.js'
+import { SessionRetrieval, evidenceId } from './host/retrieval.js'
 
 export const name = 'session-fts'
 
@@ -36,13 +37,16 @@ function resolveConfig(config = {}) {
   if (!Number.isFinite(minScore) || minScore < -1 || minScore > 1) throw new TypeError('session-fts: invalid minScore')
   return {
     path,
+    identity: { userId: config.userId ?? process.env.DSH_MEMORY_USER_ID ?? process.env.DSH_USER_ID ?? process.env.USER ?? 'unknown-user',
+      deviceId: config.deviceId ?? process.env.DSH_MEMORY_DEVICE_ID ?? process.env.DSH_DEVICE_ID ?? hostname(),
+      profile: config.profile ?? process.env.DSH_PROFILE ?? process.env.DSH_PROFILE_NAME ?? '' },
     sourceId: config.sourceId ?? home,
     busyTimeoutMs: int(config.busyTimeoutMs, 5000, 1, 60000),
     maxPending: int(config.maxPending, 64, 1, 1000),
     queryTimeoutMs: int(config.queryTimeoutMs, 10000, 1, 60000),
     resultCacheSize: int(config.resultCacheSize, 64, 0, 1000),
     resultCacheBytes: int(config.resultCacheBytes, 4 * 1024 * 1024, 1024, 64 * 1024 * 1024),
-    refreshIntervalMs: int(config.refreshIntervalMs, 60000, 5000, 3600000),
+    refreshIntervalMs: int(config.refreshIntervalMs, 60000, 0, 3600000),
     semantic: {
       enabled: semantic.enabled !== false,
       model: semantic.model ?? 'Xenova/multilingual-e5-small',
@@ -169,6 +173,7 @@ function renderToolText(result, request, scopeLabel) {
     lines.push(`   cwd: ${session.cwd ?? '-'} · ${session.hits} hit(s) · last match ${formatTime(session.lastMatchAt)}`)
     for (const match of session.matches) {
       lines.push(`   - [${match.role} seq ${match.seq} ${formatTime(match.time)}] ${match.snippet}`)
+      if (match.reference?.evidenceId) lines.push(`     evidence_id ${match.reference.evidenceId} · device ${match.reference.deviceId} · profile ${match.reference.profile}`)
     }
   })
   const shown = request.offset + result.sessions.length
@@ -224,7 +229,7 @@ function validateToolArgs(args) {
 
 export async function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig)
-  const optionsKey = JSON.stringify({ tools: config.tools, maxDocChars: config.maxDocChars, v: 1 })
+  const optionsKey = JSON.stringify({ tools: config.tools, maxDocChars: config.maxDocChars, identity: config.identity, v: 2 })
   const store = new AsyncFtsStore(config.path, optionsKey, {
     sourceId: config.sourceId,
     busyTimeoutMs: config.busyTimeoutMs,
@@ -236,8 +241,9 @@ export async function apply(ctx, rawConfig) {
   const semantic = new SemanticSearch(config)
   let semanticTimer
   let closed = false
-  indexer.onCommit = () => {
-    if (closed || !config.semantic.enabled || semanticTimer !== undefined) return
+  indexer.onCommit = docs => {
+    semantic.dirty(docs)
+    if (closed || !config.semantic.enabled || !semantic.requested || !semantic.dirtySinceRefresh || semanticTimer !== undefined) return
     semanticTimer = setTimeout(() => {
       semanticTimer = undefined
       semantic.refresh().catch(error => ctx.logger?.warn?.(`session-fts: semantic indexing failed: ${String(error)}`))
@@ -261,22 +267,28 @@ export async function apply(ctx, rawConfig) {
     const timer = setTimeout(() => {
       indexer.reconcileAll().catch(error => ctx.logger?.warn?.(`session-fts: initial index failed: ${String(error)}`))
     }, config.startupDelayMs)
-    const interval = setInterval(() => {
+    const interval = config.refreshIntervalMs > 0 ? setInterval(() => {
       if (indexer.state.phase !== 'indexing') indexer.reconcileAll().catch(error => ctx.logger?.warn?.(`session-fts: scan failed: ${String(error)}`))
-    }, config.refreshIntervalMs)
-    interval.unref()
+    }, config.refreshIntervalMs) : undefined
+    interval?.unref()
     return () => { clearTimeout(timer); clearInterval(interval) }
   }, 'session-fts: initial index')
 
-  async function search(input, signal) {
+  async function search(input, signal, timeoutMs = config.queryTimeoutMs) {
     const request = normalizeRequest(input, config)
-    if (request.mode === 'semantic') return { request, result: await semantic.search(request) }
-    const exec = { signal, timeoutMs: config.queryTimeoutMs }
-    const result = request.mode === 'title'
+    const exec = { signal, timeoutMs }
+    const result = request.mode === 'semantic' ? await semantic.search(request) : request.mode === 'title'
       ? await store.searchTitles(request, exec)
       : await store.search(request, exec)
+    for (const session of result.sessions) for (const match of session.matches) {
+      match.reference = { ...config.identity, sessionId: session.sessionId, seq: match.seq, time: match.time, workspace: session.cwd, source: 'dsh-native-event' }
+      if (Number.isSafeInteger(match.seq)) match.reference.evidenceId = evidenceId(match.reference)
+    }
     return { request, result }
   }
+
+  const retrieval = new SessionRetrieval(config.identity, search)
+  ctx.provide?.('sessionRetrieval', retrieval)
 
   ctx.effect(() => ctx.tools.register({
     name: 'session_fts_search',
@@ -358,4 +370,6 @@ export async function apply(ctx, rawConfig) {
       },
     }), 'session-fts: route')
   })
+  // Cordis collects the resolved async return as a cleanup effect.
+  // Resources are already owned by ctx.effect; do not return runtime state.
 }

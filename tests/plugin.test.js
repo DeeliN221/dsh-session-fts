@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { apply } from '../index.js'
 import { AsyncFtsStore } from '../host/lexical.js'
 import { Indexer } from '../host/indexer.js'
+import { SemanticSearch } from '../host/semantic.js'
 
 // Run the plugin's actual registrations with real worker storage; external DSH
 // services provide only the deterministic source and route/tool registration.
@@ -63,3 +64,19 @@ test('async indexer consults persistence again before pruning a missing list ite
   assert.deepEqual(await store.sessionIds(), ['foreign-live'])
   await indexer.dispose()
 })
+
+test('ordinary startup and lexical events never warm semantic; failure preserves lexical evidence',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'fts-lazy-')),disposers=[];let listener,retrieval;
+ const refresh=t.mock.method(SemanticSearch.prototype,'refresh',()=>Promise.reject(new Error('model unavailable')));
+ const events=[{seq:0,time:10,type:'user/message',data:{role:'user',source:{kind:'user'},content:[{type:'text',text:'Nebula 星云'}]}}];
+ const session={id:'s',header:{id:'s',cwd:'/repo',createdAt:1},seq:1,inheritedEventCount:0,snapshotEvents:from=>events.filter(e=>e.seq>=from)};
+ const ctx={sessions:{get:()=>session},sessionQuery:{listSessions:async()=>[{header:session.header}]},get:()=>undefined,
+ provide(name,value){if(name==='sessionRetrieval')retrieval=value},tools:{register(){return ()=>{}}},effect(fn){const d=fn();if(typeof d==='function')disposers.push(d)},on(n,h){listener=h},inject(){}};
+ const returned=await apply(ctx,{path:join(root,'fts.sqlite'),sourceId:'lazy',startupDelayMs:600000,refreshIntervalMs:0,liveDelayMs:100,semantic:{enabled:true}});
+ t.after(async()=>{for(const d of disposers.reverse())await d();rmSync(root,{recursive:true,force:true})});
+ assert.equal(returned,undefined,'async plugin entry must not return runtime state');listener(session);
+ for(let n=0;n<100;n++){if((await retrieval.search({query:'星云',cwd:'/repo'},retrieval.identity)).hits.length)break;await new Promise(r=>setTimeout(r,10));}
+ assert.equal(refresh.mock.callCount(),0);
+ await assert.rejects(retrieval.search({query:'Nebula',mode:'semantic',cwd:'/repo'},retrieval.identity),/not ready/);
+ assert.equal((await retrieval.search({query:'星云',cwd:'/repo'},retrieval.identity)).hits.length,1);
+});
