@@ -1,0 +1,73 @@
+--- a/packages/session-query/session-query-sqlite/src/index.ts
++++ b/packages/session-query/session-query-sqlite/src/index.ts
+@@ -24,6 +24,7 @@
+   assertSessionHeadersCompatible,
+   buildSessionEventSearchDocuments,
+   readColdSessionLog,
++  filterSessionResults,
+ } from '@deepseek-ai/dsh-session-query'
+ import type {
+   Config as SessionQueryConfig,
+@@ -36,6 +37,7 @@
+   SessionSearchCursor as SessionSearchCursorValue,
+   SessionSearchPage,
+   SessionSearchRequest,
++  SessionResultFilter,
+ } from '@deepseek-ai/dsh-session-query'
+ import {
+   type JournalMode,
+@@ -274,7 +276,7 @@
+     const signal = exec?.signal
+     return this._serialized(signal, async () => {
+       await this._ensureReady(signal)
+-      const persistenceBinding = await this._reconcile(signal)
++      const persistenceBinding = await this._reconcile(signal, normalized.sessionFilters)
+       assertNotAborted(signal)
+       const generation = String(this._globalGeneration)
+       const fingerprint = requestFingerprint(normalized)
+@@ -302,7 +304,7 @@
+     const signal = exec?.signal
+     return this._serialized(signal, async () => {
+       await this._ensureReady(signal)
+-      const persistenceBinding = await this._reconcile(signal)
++      const persistenceBinding = await this._reconcile(signal, [{ kind: 'id', values: [normalized.sessionId] }])
+       assertNotAborted(signal)
+       const target = this._targetObservation(normalized.sessionId, persistenceBinding)
+       const fingerprint = requestFingerprint(normalized)
+@@ -404,7 +406,7 @@
+     }
+   }
+ 
+-  private async _reconcile(signal: AbortSignal | undefined): Promise<PersistenceBinding> {
++  private async _reconcile(signal: AbortSignal | undefined, filters: readonly SessionResultFilter[] = []): Promise<PersistenceBinding> {
+     assertNotAborted(signal)
+     const db = this._requireDb()
+     const persistedRows = db.prepare(
+@@ -415,7 +417,7 @@
+     ).all() as unknown as IndexedLiveRow[]
+     const persistedById = new Map(persistedRows.map(row => [row.id as SessionId, row]))
+     const liveById = new Map(liveRows.map(row => [row.id as SessionId, row]))
+-    const observation = await this._observeStable(persistedById, signal)
++    const observation = await this._observeStable(persistedById, signal, filters)
+     assertNotAborted(signal)
+     const persistentChanges = observation.persistenceBinding.service === undefined
+       ? []
+@@ -495,6 +497,7 @@
+   private async _observeStable(
+     indexed: ReadonlyMap<SessionId, IndexedPersistedRow>,
+     signal: AbortSignal | undefined,
++    filters: readonly SessionResultFilter[] = [],
+   ): Promise<Observation> {
+     for (let attempt = 0; attempt < STABLE_OBSERVATION_ATTEMPTS; attempt += 1) {
+       assertNotAborted(signal)
+@@ -511,6 +514,10 @@
+           assertNotAborted(signal)
+           persisted = materializePersistenceSnapshots(before)
+           for (const entry of persisted.values()) {
++            // Cold-decode only query candidates; retain complete metadata for safe reconciliation.
++            if (!filterSessionResults([{
++              header: entry.header, live: initiallyLive.has(entry.header.id), persisted: true,
++            }], filters).length) continue
+             if (canReuseIndexed && indexed.get(entry.header.id)?.revision === entry.revision) continue
+             // Skip work already shadowed by a live owner. The cold read is
+             // non-mutating (interrupted turns are balanced in memory only), so
