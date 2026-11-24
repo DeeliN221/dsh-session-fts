@@ -1,6 +1,8 @@
 # dsh-session-fts
 
-仓库：[DeeliN221/dsh-session-fts](https://github.com/DeeliN221/dsh-session-fts) · 安装：`dsh plugin --profile web add ./dsh-session-fts-0.3.8.tgz`（Release 产物）。
+0.3.10 兼容修复：HTTP 检索路由复用 core 0.2.3 Connection 的来源与身份准入，并保留旧接口。无效身份、非 owner、未知结果或异常安全拒绝；不更改检索、索引或 schema。
+
+仓库：[DeeliN221/dsh-session-fts](https://github.com/DeeliN221/dsh-session-fts) · 安装：`dsh plugin --profile web add ./dsh-session-fts-0.3.10.tgz`（Release 产物）。
 
 DeepSeek Harness（DSH）的本地分层会话搜索插件：标题、中文全文和多语言语义搜索，共用时间范围与工作区筛选。
 
