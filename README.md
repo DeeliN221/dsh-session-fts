@@ -1,8 +1,10 @@
 # dsh-session-fts
 
-0.3.10 兼容修复：HTTP 检索路由复用 core 0.2.3 Connection 的来源与身份准入，并保留旧接口。无效身份、非 owner、未知结果或异常安全拒绝；不更改检索、索引或 schema。
+Use the WebServer-admitted owner Peer supplied to the route handler; do not re-enter scoped Connection authentication. Reproduce the real-token Cookie E2E using DSH_CORE_ROOT, TC_ROOT and FTS_ROOT with the committed admitted-cookie.e2e.mjs. Version 0.3.10 missed the strict consumer dependency boundary; this patch verifies actual Cookie exchange and HTTP routes.
 
-仓库：[DeeliN221/dsh-session-fts](https://github.com/DeeliN221/dsh-session-fts) · 安装：`dsh plugin --profile web add ./dsh-session-fts-0.3.10.tgz`（Release 产物）。
+0.3.11 兼容修复：HTTP 检索路由复用 core 0.2.3 Connection 的来源与身份准入，并保留旧接口。无效身份、非 owner、未知结果或异常安全拒绝；不更改检索、索引或 schema。
+
+仓库：[DeeliN221/dsh-session-fts](https://github.com/DeeliN221/dsh-session-fts) · 安装：`dsh plugin --profile web add ./dsh-session-fts-0.3.11.tgz`（Release 产物）。
 
 DeepSeek Harness（DSH）的本地分层会话搜索插件：标题、中文全文和多语言语义搜索，共用时间范围与工作区筛选。
 
