@@ -7,6 +7,7 @@
  * machine; semantic warmup downloads model assets when not cached.
  */
 
+import { requestRejection } from './host/http-auth.js'
 import { homedir, hostname } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { AsyncFtsStore } from './host/lexical.js'
@@ -321,7 +322,7 @@ export async function apply(ctx, rawConfig) {
   }), 'session-fts: tool')
 
   ctx.inject(['webServer', 'connection'], (routeCtx) => {
-    const fence = req => routeCtx.connection.requestRejection(req)
+    const fence = req => requestRejection(req, () => routeCtx.connection)
     routeCtx.effect(() => routeCtx.webServer.register({
       kind: 'prefix',
       path: ROUTE,
