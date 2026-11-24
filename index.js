@@ -322,12 +322,12 @@ export async function apply(ctx, rawConfig) {
   }), 'session-fts: tool')
 
   ctx.inject(['webServer', 'connection'], (routeCtx) => {
-    const fence = req => requestRejection(req, () => routeCtx.connection)
+    const fence = (req, peer) => requestRejection(req, () => routeCtx.connection, peer)
     routeCtx.effect(() => routeCtx.webServer.register({
       kind: 'prefix',
       path: ROUTE,
-      handler: async (req, res) => {
-        const rejection = fence(req)
+      handler: async (req, res, peer) => {
+        const rejection = fence(req, peer)
         if (rejection !== undefined) {
           writeJson(res, rejection, { ok: false, error: 'forbidden' })
           return
